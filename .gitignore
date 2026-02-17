@@ -1,0 +1,5 @@
+node_modules
+.env
+session_data
+auth_info
+*.log
