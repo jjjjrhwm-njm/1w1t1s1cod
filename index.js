@@ -11,7 +11,7 @@ const path = require("path");
 const { getAIResponse } = require("./core/ai");
 const { handleManualCommand } = require("./core/commands");
 const { isSpamming } = require("./core/antiSpam");
-const gatekeeper = require("./gatekeeper");
+const gatekeeper = require("./gatekeeper"); // [ديب سيك] استدعاء ملف الحارس
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -19,16 +19,12 @@ let qrCodeImage = "";
 let isConnected = false;
 let sock = null;
 let db = null;
-
-// إعداد حالة البوت
 let botStatus = {
     isActive: true,
     autoReply: true,
     privateMode: false,
     maintenance: false,
-    lastRestart: new Date(),
-    isPaused: false,
-    statusMessage: "✅ البوت نشط وجاهز للعمل"
+    lastRestart: new Date()
 };
 
 // إعداد Firebase
@@ -55,14 +51,12 @@ function setupDirectories() {
         './logs',
         './backups',
         './cache',
-        './temp',
-        './data'  // ← أضف هذا السطر لمجلد البيانات
+        './temp'
     ];
     
     directories.forEach(dir => {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
-            console.log(`✅ تم إنشاء المجلد: ${dir}`);
         }
     });
 }
@@ -124,90 +118,6 @@ class StateManager {
 
 const stateManager = new StateManager();
 
-// نظام التحكم في البوت
-class BotController {
-    static async handleStarCommand(text, jid, pushName) {
-        const cleanText = text.trim().toLowerCase();
-        
-        // التحقق من كلمة السر "نجم"
-        if (cleanText.startsWith('نجم ')) {
-            const command = cleanText.substring(4).trim();
-            
-            switch(command) {
-                case 'قف':
-                    botStatus.isPaused = true;
-                    botStatus.autoReply = false;
-                    botStatus.statusMessage = "⏸️ البوت متوقف مؤقتاً";
-                    logger.log('COMMAND', `Bot paused by ${pushName}`);
-                    
-                    return `*⏸️ تم إيقاف البوت مؤقتاً*\n\n`
-                         + `مرحباً ${pushName}،\n\n`
-                         + `تم إيقاف البوت مؤقتاً.\n`
-                         + `لن يرد على أي رسائل جديدة.\n\n`
-                         + `*للاستئناف:* اكتب "نجم اشتغل"\n`
-                         + `*للتشغيل الكامل:* اكتب "نجم شغل"`;
-                
-                case 'اشتغل':
-                    botStatus.isPaused = false;
-                    botStatus.autoReply = true;
-                    botStatus.statusMessage = "▶️ البوت يعمل بشكل طبيعي";
-                    logger.log('COMMAND', `Bot resumed by ${pushName}`);
-                    
-                    return `*▶️ تم تشغيل البوت*\n\n`
-                         + `مرحباً ${pushName}،\n\n`
-                         + `تم تشغيل البوت بنجاح.\n`
-                         + `سيرد على الرسائل بشكل طبيعي.\n\n`
-                         + `*للإيقاف المؤقت:* اكتب "نجم قف"\n`
-                         + `*للتشغيل الكامل:* اكتب "نجم شغل"`;
-                
-                case 'شغل':
-                    botStatus.isActive = true;
-                    botStatus.isPaused = false;
-                    botStatus.autoReply = true;
-                    botStatus.maintenance = false;
-                    botStatus.statusMessage = "🚀 البوت نشط بالكامل";
-                    logger.log('COMMAND', `Bot fully activated by ${pushName}`);
-                    
-                    return `*🚀 تم التشغيل الكامل*\n\n`
-                         + `مرحباً ${pushName}،\n\n`
-                         + `جميع أنظمة البوت تعمل الآن:\n\n`
-                         + `✅ الرد التلقائي\n`
-                         + `✅ نظام الحارس\n`
-                         + `✅ الذكاء الاصطناعي\n`
-                         + `✅ جميع الميزات\n\n`
-                         + `*للإيقاف المؤقت:* اكتب "نجم قف"\n`
-                         + `*للتشغيل الطبيعي:* اكتب "نجم اشتغل"`;
-                
-                case 'حالتي':
-                    const statusEmoji = botStatus.isPaused ? '⏸️' : (botStatus.isActive ? '✅' : '❌');
-                    const statusText = botStatus.isPaused ? 'متوقف مؤقتاً' : (botStatus.isActive ? 'نشط' : 'متوقف');
-                    
-                    return `*📊 حالة البوت الحالية:*\n\n`
-                         + `${statusEmoji} *الحالة:* ${statusText}\n`
-                         + `💬 *الرسالة:* ${botStatus.statusMessage}\n`
-                         + `🔄 *الرد التلقائي:* ${botStatus.autoReply ? 'نشط ✅' : 'معطل ❌'}\n`
-                         + `⏰ *آخر إعادة تشغيل:* ${botStatus.lastRestart.toLocaleTimeString('ar-SA')}\n\n`
-                         + `*الأوامر المتاحة:*\n`
-                         + `- "نجم قف" ← إيقاف مؤقت\n`
-                         + `- "نجم اشتغل" ← تشغيل عادي\n`
-                         + `- "نجم شغل" ← تشغيل كامل\n`
-                         + `- "نجم حالتي" ← عرض الحالة`;
-                
-                default:
-                    return `*🔧 أوامر التحكم بالبوت:*\n\n`
-                         + `استخدم "نجم" متبوعة بالأمر:\n\n`
-                         + `*قف* ← إيقاف البوت مؤقتاً\n`
-                         + `*اشتغل* ← تشغيل البوت عادي\n`
-                         + `*شغل* ← تشغيل البوت كامل\n`
-                         + `*حالتي* ← عرض حالة البوت\n\n`
-                         + `*مثال:* "نجم قف" لإيقاف البوت`;
-            }
-        }
-        
-        return null;
-    }
-}
-
 async function startBot() {
     try {
         setupDirectories();
@@ -247,7 +157,6 @@ async function startBot() {
                 const ownerJid = process.env.OWNER_NUMBER ? process.env.OWNER_NUMBER + '@s.whatsapp.net' : null;
                 if (ownerJid) {
                     gatekeeper.initialize(sock, ownerJid);
-                    console.log('✅ تم تهيئة نظام جهات الاتصال');
                 }
                 
                 await sendStartupNotification();
@@ -294,21 +203,7 @@ async function backupSessionToFirebase() {
 async function sendStartupNotification() {
     const ownerJid = process.env.OWNER_NUMBER ? process.env.OWNER_NUMBER + '@s.whatsapp.net' : null;
     if (ownerJid && sock) {
-        await sock.sendMessage(ownerJid, { 
-            text: `✅ راشد جاهز لخدمتك يا مطور!\n\n` +
-                  `*حالة النظام:* ${botStatus.statusMessage}\n` +
-                  `*نظام جهات الاتصال:* ✅ نشط\n` +
-                  `*الأوامر المتاحة:*\n` +
-                  `- نجم قف ← إيقاف مؤقت\n` +
-                  `- نجم اشتغل ← تشغيل عادي\n` +
-                  `- نجم شغل ← تشغيل كامل\n` +
-                  `- نجم حالتي ← عرض الحالة\n` +
-                  `- جهات ← إدارة جهات الاتصال\n` +
-                  `- بحث ← البحث في الجهات\n` +
-                  `- جهة ← معلومات جهة محددة\n\n` +
-                  `*ملاحظة:*\n` +
-                  `البوت الآن يتعرف على الأسماء من جهات اتصالك تلقائياً!`
-        });
+        await sock.sendMessage(ownerJid, { text: `✅ راشد جاهز لخدمتك يا مطور!` });
     }
 }
 
@@ -328,25 +223,6 @@ async function processIncomingMessage(msg) {
     const isOwner = jid.includes(process.env.OWNER_NUMBER || "966554526287");
     
     try {
-        // فحص أوامر التحكم "نجم"
-        const starCommand = await BotController.handleStarCommand(text, jid, pushName);
-        if (starCommand) {
-            await sock.sendMessage(jid, { text: starCommand });
-            return;
-        }
-
-        // التحقق من حالة البوت
-        if (botStatus.isPaused && !isOwner) {
-            await sock.sendMessage(jid, { 
-                text: `⏸️ *البوت متوقف مؤقتاً*\n\n` +
-                      `عذراً ${pushName}،\n` +
-                      `البوت متوقف حالياً للتحديث والصيانة.\n` +
-                      `سيعود للعمل قريباً بإذن الله.\n\n` +
-                      `_للتواصل المباشر مع المالك، يرجى الانتظار._`
-            });
-            return;
-        }
-
         // فحص الأوامر اليدوية
         const manualResponse = await handleManualCommand(text, jid, isOwner, pushName);
         
@@ -356,34 +232,29 @@ async function processIncomingMessage(msg) {
             return;
         }
 
-        // 🛡️ [نظام ديب سيك المطور] --- الحارس --- 🛡️
+        // نظام الحارس
         
-        // 1. إذا كان المرسل هو المالك، نفحص إذا كان يرد بـ نعم/لا
+        // إذا كان المرسل هو المالك، نفحص إذا كان يرد بـ نعم/لا أو أوامر
         if (isOwner) {
             if (gatekeeper.handleOwnerDecision(text)) return; 
         }
 
-        // 2. فحص الإذن والانتظار
+        // فحص الإذن والانتظار
         const gateResponse = await gatekeeper.handleEverything(jid, pushName, text);
         
-        if (gateResponse.status === 'STOP' || gateResponse.status === 'WAITING') return;
-        
-        // 3. الحصول على الاسم الحقيقي للرد الشخصي
-        const realName = await gatekeeper.getNameForResponse(jid, pushName);
+        if (gateResponse.status === 'STOP' || gateResponse.status === 'WAITING' || gateResponse.status === 'WAITING_OTP') return;
         
         if (botStatus.maintenance && !isOwner) return;
         if (!botStatus.autoReply && !isOwner) return;
         
-        // الرد بالذكاء الاصطناعي مع الاسم الحقيقي
+        // الرد بالذكاء الاصطناعي
         await sock.sendPresenceUpdate('composing', jid);
-        
-        // استخدام الاسم الحقيقي بدلاً من pushName
-        const aiResponse = await getAIResponse(jid, text, realName);
+        const aiResponse = await getAIResponse(jid, text, pushName);
         
         if (aiResponse) {
             await delay(1000 + (aiResponse.length * 10)); 
             await sock.sendMessage(jid, { text: aiResponse });
-            if (db) updateStatistics(jid, realName, text, aiResponse);
+            if (db) updateStatistics(jid, pushName, text, aiResponse);
         }
         
     } catch (error) {
@@ -412,100 +283,151 @@ async function updateStatistics(jid, pushName, query, response) {
     } catch (e) {}
 }
 
-app.get("/", (req, res) => {
-    if (isConnected) {
-        res.send(`
-            <!DOCTYPE html>
-            <html dir="rtl">
-            <head>
-                <title>راشد - السكرتير الذكي</title>
-                <style>
-                    body {
-                        font-family: Arial, sans-serif;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                        text-align: center;
-                        padding: 50px;
-                    }
-                    .container {
-                        background: rgba(255,255,255,0.1);
-                        padding: 30px;
-                        border-radius: 15px;
-                        backdrop-filter: blur(10px);
-                        max-width: 600px;
-                        margin: 0 auto;
-                        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-                    }
-                    h1 {
-                        margin-bottom: 20px;
-                    }
-                    .status {
-                        font-size: 24px;
-                        margin: 20px 0;
-                        padding: 15px;
-                        background: rgba(0,0,0,0.2);
-                        border-radius: 10px;
-                    }
-                    .commands {
-                        text-align: right;
-                        background: rgba(255,255,255,0.1);
-                        padding: 20px;
-                        border-radius: 10px;
-                        margin-top: 20px;
-                    }
-                    .feature {
-                        background: rgba(255,255,255,0.1);
-                        padding: 15px;
-                        margin: 10px 0;
-                        border-radius: 10px;
-                        border-right: 5px solid #4CAF50;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>🤖 راشد - السكرتير الذكي</h1>
-                    <div class="status">
-                        ✅ البوت متصل الآن
-                    </div>
-                    <p>حالة البوت: ${botStatus.statusMessage}</p>
-                    
-                    <div class="feature">
-                        <h3>📞 نظام جهات الاتصال الجديد</h3>
-                        <p>✅ يتعرف على الأسماء من جهات اتصالك</p>
-                        <p>✅ يحفظ جميع الأسماء تلقائياً</p>
-                        <p>✅ يدعم البحث في الجهات</p>
-                    </div>
-                    
-                    <div class="commands">
-                        <h3>📋 أوامر التحكم:</h3>
-                        <p><strong>نجم قف</strong> ← إيقاف البوت مؤقتاً</p>
-                        <p><strong>نجم اشتغل</strong> ← تشغيل البوت عادي</p>
-                        <p><strong>نجم شغل</strong> ← تشغيل البوت كامل</p>
-                        <p><strong>نجم حالتي</strong> ← عرض حالة البوت</p>
-                        <p><strong>جهات</strong> ← إدارة جهات الاتصال</p>
-                        <p><strong>بحث</strong> ← البحث في الجهات</p>
-                        <p><strong>جهة</strong> ← معلومات جهة محددة</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `);
-    } else if (qrCodeImage && qrCodeImage !== "DONE") {
-        res.send(`
-            <div style='text-align:center;'>
-                <h1>🔐 امسح الكود للاتصال</h1>
-                <img src='${qrCodeImage}'>
-            </div>
-        `);
-    } else {
-        res.send("<h1 style='text-align:center;'>🔄 جاري التهيئة...</h1>");
+// =============================================
+// 🔥 نقاط API الجديدة للتحقق من التطبيقات 🔥
+// =============================================
+
+app.use(express.json()); // لقراءة JSON من التطبيق
+
+// نقطة نهاية لطلب التحقق من التطبيق
+app.post('/api/verify-app', async (req, res) => {
+    try {
+        const { jid, pushName, appName, name, phone, deviceId } = req.body;
+        
+        if (!jid || !appName || !deviceId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'بيانات ناقصة: jid, appName, deviceId مطلوبة' 
+            });
+        }
+        
+        const result = await gatekeeper.handleAppVerification(jid, pushName, appName, name, phone, deviceId);
+        res.json({ success: true, ...result });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
     }
 });
 
+// نقطة نهاية للتحقق من الكود
+app.post('/api/verify-otp', async (req, res) => {
+    try {
+        const { jid, appName, otp } = req.body;
+        
+        if (!jid || !appName || !otp) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'بيانات ناقصة: jid, appName, otp مطلوبة' 
+            });
+        }
+        
+        const result = await gatekeeper.verifyOTP(jid, appName, otp);
+        res.json({ success: true, ...result });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// نقطة نهاية للتحقق من حالة التوثيق
+app.post('/api/check-verification', async (req, res) => {
+    try {
+        const { jid, appName } = req.body;
+        
+        if (!jid || !appName) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'بيانات ناقصة: jid, appName مطلوبة' 
+            });
+        }
+        
+        const isVerified = gatekeeper.isAppVerified(jid, appName);
+        const sessionInfo = gatekeeper.getSessionInfo(jid);
+        const otpInfo = gatekeeper.getOTPInfo(jid, appName);
+        
+        res.json({ 
+            success: true, 
+            verified: isVerified,
+            session: sessionInfo,
+            otp: otpInfo
+        });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// نقطة نهاية للحصول على معلومات المستخدم (للمطور)
+app.post('/api/user-info', async (req, res) => {
+    try {
+        const { jid, adminKey } = req.body;
+        
+        // تحقق بسيط
+        if (adminKey !== process.env.ADMIN_KEY) {
+            return res.status(403).json({ 
+                success: false, 
+                error: 'غير مصرح' 
+            });
+        }
+        
+        if (!jid) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'jid مطلوب' 
+            });
+        }
+        
+        const sessionInfo = gatekeeper.getSessionInfo(jid);
+        const verifiedApps = [];
+        
+        // البحث عن التطبيقات الموثقة لهذا المستخدم
+        // هذا يحتاج تعديل في gatekeeper.js لكن حالياً نرجع معلومات بسيطة
+        
+        res.json({ 
+            success: true, 
+            jid,
+            session: sessionInfo
+        });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// نقطة نهاية للصحة (Health check)
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: isConnected ? 'connected' : 'disconnected',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+    });
+});
+
+// =============================================
+// الصفحة الرئيسية (كما هي)
+// =============================================
+
+app.get("/", (req, res) => {
+    if (isConnected) res.send("<h1 style='text-align:center;color:green;'>✅ راشد متصل الآن</h1>");
+    else if (qrCodeImage) res.send(`<div style='text-align:center;'><h1>🔐 امسح الكود</h1><img src='${qrCodeImage}'></div>`);
+    else res.send("<h1>🔄 جاري التهيئة...</h1>");
+});
+
+// بدء الخادم
 app.listen(port, () => {
-    console.log(`🌐 Server running on port ${port}`);
-    console.log(`🤖 Bot Status: ${botStatus.statusMessage}`);
-    console.log(`📞 نظام جهات الاتصال: جاهز للتشغيل`);
+    console.log(`🌐 Server on port ${port}`);
+    console.log(`📱 API endpoints available at http://localhost:${port}/api/`);
     startBot();
 });
