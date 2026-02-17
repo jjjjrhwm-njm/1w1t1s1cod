@@ -1,0 +1,48 @@
+{
+  "name": "smart-secretary-vip",
+  "version": "4.0.0",
+  "description": "نظام سكرتير ذكي متطور يشبه الإنسان تماماً",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "jest --watchAll",
+    "backup": "node scripts/backup.js",
+    "clean": "node scripts/cleanup.js"
+  },
+  "keywords": ["whatsapp-bot", "ai-assistant", "secretary", "arabic-ai"],
+  "author": "VIP Developer",
+  "license": "MIT",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.6.0",
+    "@google/generative-ai": "^0.21.0",
+    "qrcode": "^1.5.3",
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1",
+    "firebase-admin": "^12.0.0",
+    "groq-sdk": "^0.12.0",
+    "pino": "^9.0.0",
+    "fs-extra": "^11.1.1",
+    "moment": "^2.30.1",
+    "moment-hijri": "^2.2.0",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "compression": "^1.7.4",
+    "rate-limiter-flexible": "^2.4.2",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "winston": "^3.11.0",
+    "node-cron": "^3.0.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}
