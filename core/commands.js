@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// نظام متقدم لإدارة الأوامر
 class SecretaryCommandSystem {
     constructor() {
         this.commandRegistry = new Map();
@@ -12,11 +13,13 @@ class SecretaryCommandSystem {
     }
 
     initializeNaturalCommands() {
+        // أوامر طبيعية تبدو كمحادثة عادية
         this.registerNaturalCommands();
         this.registerAdminCommands();
     }
 
     registerNaturalCommands() {
+        // الأوامر الأساسية (تظهر كردود طبيعية)
         this.commandRegistry.set('الاوامر', this.handleNaturalHelp.bind(this));
         this.commandRegistry.set('مساعدة', this.handleNaturalHelp.bind(this));
         this.commandRegistry.set('وش تقدر', this.handleCapabilities.bind(this));
@@ -33,11 +36,10 @@ class SecretaryCommandSystem {
         this.commandRegistry.set('حظ', this.handleFortune.bind(this));
         this.commandRegistry.set('نكته', this.handleJoke.bind(this));
         this.commandRegistry.set('حكمه', this.handleWisdom.bind(this));
-        this.commandRegistry.set('حاله', this.handleBotStatus.bind(this));
-        this.commandRegistry.set('جهاتي', this.handleContacts.bind(this));
     }
 
     registerAdminCommands() {
+        // أوامر المطور (تتطلب صلاحيات)
         this.adminRegistry.set('توقف', this.handlePause.bind(this));
         this.adminRegistry.set('كمل', this.handleResume.bind(this));
         this.adminRegistry.set('شغل', this.handleStart.bind(this));
@@ -53,16 +55,25 @@ class SecretaryCommandSystem {
         this.adminRegistry.set('جلسه', this.handleSession.bind(this));
         this.adminRegistry.set('لوج', this.handleLog.bind(this));
         this.adminRegistry.set('ريست', this.handleRestart.bind(this));
-        this.adminRegistry.set('جهات', this.handleContactsAdmin.bind(this));
-        this.adminRegistry.set('بحث', this.handleSearchContact.bind(this));
-        this.adminRegistry.set('جهة', this.handleContactInfo.bind(this));
+        
+        // ✅ الأوامر الجديدة للتحكم بالذكاء
+        this.adminRegistry.set('نجم ذكا', this.handleAIEnable.bind(this));
+        this.adminRegistry.set('نجم ذكا قف', this.handleAIDisable.bind(this));
+        
+        // ✅ الأوامر الجديدة من طلبك
+        this.adminRegistry.set('نجم حضر', this.handleNajmPresent.bind(this));
+        this.adminRegistry.set('نجم نشر', this.handleNajmPublish.bind(this));
+        this.adminRegistry.set('نجم احصا', this.handleNajmStats.bind(this));
+        this.adminRegistry.set('نجم معلومات', this.handleNajmInfo.bind(this));
     }
 
     async handleManualCommand(text, jid, isOwner, pushName) {
+        // تحديث نشاط المستخدم
         this.updateUserActivity(jid, pushName);
         
         const cleanText = text.trim().toLowerCase();
         
+        // كلمات السر الخاصة
         if (cleanText === 'نجم1997' || cleanText === 'راشد123') {
             return this.generateNaturalControlPanel(pushName, isOwner);
         }
@@ -71,12 +82,14 @@ class SecretaryCommandSystem {
             return this.activatePrivateMode(pushName);
         }
         
+        // البحث عن أمر مطابق
         for (const [command, handler] of this.commandRegistry) {
             if (cleanText === command || cleanText.includes(command)) {
                 return await handler(jid, pushName, text);
             }
         }
         
+        // أوامر المطور
         if (isOwner) {
             for (const [command, handler] of this.adminRegistry) {
                 if (cleanText === command || cleanText.includes(command)) {
@@ -85,7 +98,7 @@ class SecretaryCommandSystem {
             }
         }
         
-        return null;
+        return null; // لا يوجد أمر، يتم التعامل معه كحديث عادي
     }
 
     generateNaturalControlPanel(pushName, isOwner) {
@@ -113,27 +126,29 @@ class SecretaryCommandSystem {
         panel += `• *اوقات* - اوقات الصلاة\n`;
         panel += `• *اذكار* - اذكار الصباح والمساء\n`;
         panel += `• *اقتراح* - اقترح لك شي\n`;
-        panel += `• *حظ* - اقرأ حظك\n`;
-        panel += `• *جهاتي* - جهات الاتصال المحفوظة\n\n`;
+        panel += `• *حظ* - اقرأ حظك\n\n`;
         
         panel += `*😊 ترفيه:*\n`;
         panel += `• *نكته* - قل لي نكته\n`;
         panel += `• *حكمه* - اعطني حكمه\n`;
         panel += `• *وش تقدر* - اعرف قدراتي\n`;
-        panel += `• *شلونك* - اسأل عن حالي\n`;
-        panel += `• *حاله* - حالة البوت الحالية\n\n`;
+        panel += `• *شلونك* - اسأل عن حالي\n\n`;
         
         if (isOwner) {
             panel += `*⚙️ إعدادات المطور:*\n`;
             panel += `• *فحص* - حالة النظام\n`;
             panel += `• *مستخدمين* - عدد المستخدمين\n`;
             panel += `• *احصائيات* - احصائيات مفصله\n`;
-            panel += `• *جهات* - إدارة جهات الاتصال\n`;
-            panel += `• *بحث* - البحث في الجهات\n`;
             panel += `• *توقف* - اوقف الرد التلقائي\n`;
             panel += `• *كمل* - شغل الرد التلقائي\n`;
             panel += `• *نظف* - نظف الملفات المؤقته\n`;
             panel += `• *حدث* - حدث النظام\n`;
+            panel += `• *نجم ذكا* - تشغيل الذكاء الاصطناعي\n`;
+            panel += `• *نجم ذكا قف* - إيقاف الذكاء الاصطناعي\n`;
+            panel += `• *نجم حضر* - عرض المستخدمين النشطين\n`;
+            panel += `• *نجم نشر* - إرسال رسالة للجميع\n`;
+            panel += `• *نجم احصا* - إحصائيات النظام\n`;
+            panel += `• *نجم معلومات* - معلومات مستخدم\n`;
         }
         
         panel += `\n══════════════════\n`;
@@ -161,9 +176,7 @@ class SecretaryCommandSystem {
             'محادثة': 'تكلم معاي عادي وبرد عليك',
             'تنظيم': 'ساعدك في المهام والمواعيد',
             'خدمات': 'أوقات الصلاة، أذكار، اقتراحات',
-            'ترفيه': 'نكت، حكم، قراءة حظ',
-            'حالة': 'عرض حالة البوت الحالية',
-            'جهات': 'عرض جهات الاتصال المحفوظة'
+            'ترفيه': 'نكت، حكم، قراءة حظ'
         };
         
         let response = `*🆘 كيف أستخدم السكرتير:*\n\n`;
@@ -174,10 +187,8 @@ class SecretaryCommandSystem {
         
         response += `\n*مثال:*\n`;
         response += `- "وش تسوي" ← أخبرك عن حالي\n`;
-        response += `- "حاله" ← حالة البوت الحالية\n`;
         response += `- "ضبط لي تذكير" ← أساعدك بالتذكير\n`;
-        response += `- "عطيني نكته" ← أضحكك شوي\n`;
-        response += `- "جهاتي" ← جهات الاتصال المحفوظة\n\n`;
+        response += `- "عطيني نكته" ← أضحكك شوي\n\n`;
         response += `*تلميح:*\n`;
         response += `ما تحتاج أوامر معقدة، تكلم معاي زي ما تتكلم مع صديقك 👌`;
         
@@ -193,9 +204,7 @@ class SecretaryCommandSystem {
             'تقديم اقتراحات مناسبة',
             'إعطاء نكت وحكم مناسبة',
             'قراءة الحظ بطريقة مرحة',
-            'تقديم النصائح المفيدة',
-            'عرض حالة البوت الحالية',
-            'التعرف على الأسماء من جهات الاتصال'
+            'تقديم النصائح المفيدة'
         ];
         
         let response = `*🛠️ الأشياء اللي أقدر أسويها:*\n\n`;
@@ -204,9 +213,7 @@ class SecretaryCommandSystem {
             response += `${index + 1}. ${cap}\n`;
         });
         
-        response += `\n*ميزة خاصة:*\n`;
-        response += `أتعرف على أسمائكم الحقيقية من جهات الاتصال!`;
-        response += `\n\n*لكن انتبه:*\n`;
+        response += `\n*لكن انتبه:*\n`;
         response += `ما أقدر:\n`;
         response += `• أتواصل مع أرقام أخرى\n`;
         response += `• أرسل ملفات أو صور\n`;
@@ -282,6 +289,7 @@ class SecretaryCommandSystem {
         
         response += `\n*الصلاة القادمة:* `;
         
+        // تحديد الصلاة القادمة (مثال مبسط)
         const currentHour = now.getHours();
         if (currentHour < 4) response += `الفجر 🌅`;
         else if (currentHour < 12) response += `الظهر ☀️`;
@@ -462,135 +470,7 @@ class SecretaryCommandSystem {
              + `_ربنا يزيدك حكمة وعقل_ 🧠✨`;
     }
 
-    async handleBotStatus(jid, pushName) {
-        const { botStatus } = require('./index');
-        
-        const statusEmoji = botStatus.isPaused ? '⏸️' : (botStatus.isActive ? '✅' : '❌');
-        const statusText = botStatus.isPaused ? 'متوقف مؤقتاً' : (botStatus.isActive ? 'نشط' : 'متوقف');
-        
-        return `*🤖 حالة البوت الحالية:*\n\n`
-             + `${statusEmoji} *الحالة:* ${statusText}\n`
-             + `💬 *الرسالة:* ${botStatus.statusMessage}\n`
-             + `🔄 *الرد التلقائي:* ${botStatus.autoReply ? 'نشط ✅' : 'معطل ❌'}\n`
-             + `🔧 *الخاص:* ${botStatus.privateMode ? 'مفعل ✅' : 'معطل ❌'}\n`
-             + `⚙️ *الصيانة:* ${botStatus.maintenance ? 'جارية 🛠️' : 'لايوجد ✅'}\n`
-             + `⏰ *آخر إعادة تشغيل:* ${botStatus.lastRestart.toLocaleTimeString('ar-SA')}\n\n`
-             + `_البوت يعمل بشكل ${botStatus.isActive ? 'طبيعي' : 'محدود'}_`;
-    }
-
-    async handleContacts(jid, pushName) {
-        try {
-            let gatekeeper;
-            try {
-                gatekeeper = require('../gatekeeper');
-            } catch (e1) {
-                try {
-                    gatekeeper = require('./gatekeeper');
-                } catch (e2) {
-                    try {
-                        gatekeeper = require('../../gatekeeper');
-                    } catch (e3) {
-                        gatekeeper = null;
-                    }
-                }
-            }
-            
-            if (!gatekeeper) {
-                return `*📞 معلومات جهة الاتصال:*\n\n`
-                     + `*الاسم:* ${pushName}\n`
-                     + `*الحالة:* ⚠️ نظام جهات الاتصال غير متوفر\n\n`
-                     + `*السبب:* لم يتم تحميل النظام\n\n`
-                     + `*الحل:*\n`
-                     + `جرب مرة أخرى بعد ثواني\n`
-                     + `أو أعد تشغيل البوت`;
-            }
-            
-            // دالة مبسطة
-            const getMyContactInfo = async (jid, pushName) => {
-                return {
-                    success: true,
-                    name: pushName,
-                    phone: jid.split('@')[0],
-                    isRegistered: false,
-                    messageCount: 0,
-                    firstSeen: 'الآن',
-                    lastSeen: 'الآن'
-                };
-            };
-            
-            const contactInfo = await getMyContactInfo(jid, pushName);
-            
-            let response = `*📞 معلومات جهة الاتصال:*\n\n`;
-            response += `*الاسم:* ${contactInfo.name}\n`;
-            response += `*الرقم:* ${contactInfo.phone}\n`;
-            
-            if (contactInfo.isRegistered) {
-                response += `*الحالة:* ✅ مسجل في جهات الاتصال\n`;
-                response += `*عدد الرسائل:* ${contactInfo.messageCount}\n`;
-                response += `*أول ظهور:* ${contactInfo.firstSeen}\n`;
-                response += `*آخر ظهور:* ${contactInfo.lastSeen}\n\n`;
-                response += `*ملاحظة:*\n`;
-                response += `البوت يتعرف عليك بالاسم المسجل في جهات الاتصال تلقائياً!`;
-            } else {
-                response += `*الحالة:* ⚠️ استخدام الاسم الظاهر فقط\n`;
-                response += `*السبب:* نظام جهات الاتصال قيد التطوير\n\n`;
-                response += `*معلومات:*\n`;
-                response += `1. البوت يستخدم الاسم الظاهر في الرسالة\n`;
-                response += `2. قريباً سيتعرف على الأسماء من جهات الاتصال\n`;
-                response += `3. هذه الميزة قيد التطوير حالياً`;
-            }
-            
-            return response;
-            
-        } catch (error) {
-            console.error('خطأ في handleContacts:', error);
-            
-            return `*📞 معلومات جهة الاتصال:*\n\n`
-                 + `*الاسم:* ${pushName}\n`
-                 + `*الحالة:* ⚠️ نظام مؤقت\n\n`
-                 + `*الميزات:*\n`
-                 + `1. محادثة طبيعية ✅\n`
-                 + `2. ردود ذكية ✅\n`
-                 + `3. جهات الاتصال قيد التطوير ⚠️\n\n`
-                 + `*ملاحظة:*\n`
-                 + `البوت يتعامل معك بالاسم الظاهر في الرسالة`;
-        }
-    }
-
-    async handleContactsAdmin(jid, pushName) {
-        return `*📞 إحصائيات جهات الاتصال:*\n\n`
-             + `*الحالة:* قيد التطوير ⚠️\n\n`
-             + `*الميزات المتوقعة:*\n`
-             + `1. جلب الأسماء من جهات الاتصال\n`
-             + `2. حفظ الأسماء تلقائياً\n`
-             + `3. البحث في الجهات\n`
-             + `4. إحصائيات مفصلة\n\n`
-             + `*حالياً:*\n`
-             + `البوت يستخدم الأسماء الظاهرة في الرسائل`;
-    }
-
-    async handleSearchContact(jid, pushName, text) {
-        return `*🔍 نظام البحث:*\n\n`
-             + `*الحالة:* قيد التطوير ⚠️\n\n`
-             + `*كيف سيعمل:*\n`
-             + `اكتب "بحث" متبوعة باسم أو رقم\n`
-             + `مثال: "بحث محمد" أو "بحث 96655"\n\n`
-             + `*حالياً:*\n`
-             + `جاري تطوير نظام جهات الاتصال\n`
-             + `سيتم تفعيله قريباً بإذن الله`;
-    }
-
-    async handleContactInfo(jid, pushName, text) {
-        return `*👤 معلومات الجهة:*\n\n`
-             + `*الحالة:* قيد التطوير ⚠️\n\n`
-             + `*كيف سيعمل:*\n`
-             + `اكتب "جهة" متبوعة بالرقم\n`
-             + `مثال: "جهة 966554526287"\n\n`
-             + `*حالياً:*\n`
-             + `يمكنك استخدام الأمر "جهاتي"\n`
-             + `لعرض معلومات جهة الاتصال الخاصة بك`;
-    }
-
+    // أوامر المطور
     async handlePause(jid, pushName) {
         return `*⏸️ فهمت...*\n\n`
              + `راح أوقف الرد التلقائي خلاص.\n`
@@ -613,8 +493,7 @@ class SecretaryCommandSystem {
              + `✅ الرد التلقائي\n`
              + `✅ الذكاء الاصطناعي\n`
              + `✅ نظام التذكيرات\n`
-             + `✅ حفظ المحادثات\n`
-             + `✅ جهات الاتصال\n\n`
+             + `✅ حفظ المحادثات\n\n`
              + `_جاهز للعمل بكامل طاقتي_ 💪`;
     }
 
@@ -651,8 +530,7 @@ class SecretaryCommandSystem {
              + `• إحصائيات النظام\n`
              + `• قواعد البيانات\n`
              + `• ملفات الإعدادات\n`
-             + `• سجلات المحادثات\n`
-             + `• جهات الاتصال\n\n`
+             + `• سجلات المحادثات\n\n`
              + `_يُنصح بحفظ النسخ خارجياً بانتظام_ 🔒`;
     }
 
@@ -686,7 +564,7 @@ class SecretaryCommandSystem {
         return `*👥 المجموعات النشطة:*\n\n`
              + `حالياً البوت موجود في:\n\n`
              + `*المجموعات العامة:* متعددة\n`
-             + `*الممجموعات الخاصة:* محدودة\n`
+             + `*المجموعات الخاصة:* محدودة\n`
              + `*حالة المجموعات:* نشطة\n\n`
              + `*ملاحظة:*\n`
              + `البوت يحترم خصوصية المجموعات\n`
@@ -704,8 +582,7 @@ class SecretaryCommandSystem {
              + `لم يتم مسح:\n`
              + `• بيانات المستخدمين الأساسية\n`
              + `• ملفات الإعدادات\n`
-             + `• السجلات المهمة\n`
-             + `• جهات الاتصال\n\n`
+             + `• السجلات المهمة\n\n`
              + `_النظام جاهز للبدء من جديد_ 🔄`;
     }
 
@@ -778,6 +655,40 @@ class SecretaryCommandSystem {
              + `_أرجع لك خلال لحظات_ ⏳`;
     }
 
+    // ✅ أوامر التحكم بالذكاء الاصطناعي (تُمرر إلى gatekeeper)
+    async handleAIEnable(jid, pushName) {
+        return `✅ تم إرسال أمر تشغيل الذكاء الاصطناعي للمعالجة`;
+    }
+
+    async handleAIDisable(jid, pushName) {
+        return `⏸️ تم إرسال أمر إيقاف الذكاء الاصطناعي للمعالجة`;
+    }
+
+    // ✅ أوامر نجم الجديدة
+    async handleNajmPresent(jid, pushName) {
+        return `👥 تم إرسال أمر عرض المستخدمين النشطين للمعالجة`;
+    }
+
+    async handleNajmPublish(jid, pushName, text) {
+        const message = text.replace('نجم نشر', '').trim();
+        if (!message) {
+            return `❌ اكتب الرسالة بعد الأمر، مثال:\nنجم نشر مرحبا بالجميع`;
+        }
+        return `📢 تم إرسال أمر النشر للمعالجة بالرسالة: "${message}"`;
+    }
+
+    async handleNajmStats(jid, pushName) {
+        return `📊 تم إرسال أمر الإحصائيات للمعالجة`;
+    }
+
+    async handleNajmInfo(jid, pushName, text) {
+        const target = text.replace('نجم معلومات', '').trim();
+        if (!target) {
+            return `❌ اكتب رقم أو اسم المستخدم بعد الأمر، مثال:\nنجم معلومات 9665xxxxxx`;
+        }
+        return `ℹ️ تم إرسال أمر معلومات المستخدم للمعالجة: ${target}`;
+    }
+
     updateUserActivity(jid, pushName) {
         if (!this.userActivity.has(jid)) {
             this.userActivity.set(jid, {
@@ -816,13 +727,15 @@ class SecretaryCommandSystem {
     }
 }
 
+// إنشاء نسخة واحدة من النظام
 const secretaryCommands = new SecretaryCommandSystem();
 
+// دالة رئيسية للتوافق
 function handleManualCommand(text, jid, isOwner, pushName) {
     return secretaryCommands.handleManualCommand(text, jid, isOwner, pushName);
 }
 
 module.exports = { 
     handleManualCommand,
-    secretaryCommands
+    secretaryCommands  // للاستخدام المتقدم
 };
