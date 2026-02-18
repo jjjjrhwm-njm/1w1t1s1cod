@@ -1,28 +1,28 @@
-// gatekeeper.js - النسخة المطورة مع نظام التحقق لكل تطبيق
+// gatekeeper.js - النسخة المطورة مع نظام التحقق للتطبيقات
 const pendingPermissions = new Map();
 const activeSessions = new Map();
-const pendingOTP = new Map(); // أكود التحقق المؤقتة لكل تطبيق
-const verifiedApps = new Map(); // التطبيقات الموثقة (صلاحية 30 يوم)
-const userData = new Map(); // حفظ بيانات المستخدمين (الاسم، الرقم)
+const pendingOTP = new Map(); // تخزين أكود التحقق المؤقتة
+const verifiedApps = new Map(); // تخزين التطبيقات الموثقة
 
 class Gatekeeper {
     constructor() {
         this.timeoutLimit = 35000;
         this.sessionDuration = 10 * 60 * 1000;
-        this.otpExpiry = 5 * 60 * 1000; // 5 دقائق
+        this.otpExpiry = 5 * 60 * 1000; // 5 دقائق صلاحية الكود
         this.lastRequestJid = null;
         this.sock = null;
         this.ownerJid = null;
+        this.aiEnabled = true; // الذكاء مفعل افتراضياً
     }
 
     // تهيئة الـ Gatekeeper
     initialize(sock, ownerJid) {
         this.sock = sock;
         this.ownerJid = ownerJid;
-        console.log('✅ Gatekeeper جاهز مع نظام التحقق لكل تطبيق');
+        console.log('✅ Gatekeeper جاهز للعمل مع نظام التحقق');
     }
 
-    // دالة لجلب الاسم من جهات الاتصال
+    // دالة محسنة لجلب الاسم
     async getSavedName(jid) {
         try {
             if (!this.sock) return null;
@@ -32,6 +32,7 @@ class Gatekeeper {
                     const contact = await this.sock.getContactById(jid);
                     if (contact?.name?.trim()) return contact.name.trim();
                     if (contact?.notify?.trim()) return contact.notify.trim();
+                    if (contact?.verifiedName?.trim()) return contact.verifiedName.trim();
                 } catch (error) {}
             }
             
@@ -39,6 +40,7 @@ class Gatekeeper {
                 const contact = this.sock.contacts[jid];
                 if (contact?.name?.trim()) return contact.name.trim();
                 if (contact?.notify?.trim()) return contact.notify.trim();
+                if (contact?.verifiedName?.trim()) return contact.verifiedName.trim();
             }
             
             return null;
@@ -52,48 +54,25 @@ class Gatekeeper {
         return Math.floor(100000 + Math.random() * 900000).toString();
     }
 
-    // حفظ بيانات المستخدم (الاسم والرقم)
-    saveUserData(jid, name, phone) {
-        if (!userData.has(jid)) {
-            userData.set(jid, {
-                name: name,
-                phone: phone,
-                firstSeen: new Date(),
-                apps: new Map()
-            });
-        } else {
-            const data = userData.get(jid);
-            data.name = name || data.name;
-            data.phone = phone || data.phone;
-        }
-    }
-
-    // طلب التحقق لتطبيق معين
-    async requestAppVerification(jid, pushName, appName, name, phone, deviceId) {
-        // حفظ بيانات المستخدم
-        this.saveUserData(jid, name, phone);
-        
-        const appKey = `${jid}_${appName}`;
+    // معالجة طلب التحقق من التطبيق
+    async handleAppVerification(jid, pushName, appName, name, phone, deviceId) {
         const now = Date.now();
+        const appKey = `${jid}_${appName}`;
         
         // التحقق إذا كان التطبيق موثق مسبقاً
         if (verifiedApps.has(appKey)) {
             const verified = verifiedApps.get(appKey);
             if (now - verified.timestamp < 30 * 24 * 60 * 60 * 1000) { // 30 يوم
-                return { 
-                    status: 'VERIFIED', 
-                    message: 'التطبيق موثق مسبقاً',
-                    appName,
-                    deviceId 
-                };
+                return { status: 'VERIFIED', appName, deviceId };
             }
         }
         
-        // توليد كود جديد
+        // توليد كود تحقق جديد
         const otp = this.generateOTP();
+        const otpKey = `${jid}_${appName}`;
         
         // تخزين الكود مع البيانات
-        pendingOTP.set(appKey, {
+        pendingOTP.set(otpKey, {
             otp,
             timestamp: now,
             expiry: now + this.otpExpiry,
@@ -107,53 +86,48 @@ class Gatekeeper {
             maxAttempts: 3
         });
         
-        // إرسال الكود للمستخدم عبر الواتساب (وليس للتطبيق!)
-        const userName = name || pushName || 'صديق';
+        // إرسال الكود للمستخدم عبر الواتساب
         const userMsg = `🔐 *كود التحقق لتطبيق ${appName}*\n\n` +
-                       `مرحباً ${userName},\n\n` +
+                       `مرحباً ${name || pushName},\n\n` +
                        `كود التحقق الخاص بك هو:\n\n` +
                        `*${otp}*\n\n` +
                        `⏰ صلاحية الكود: 5 دقائق\n` +
-                       `📱 الجهاز: ${deviceId || 'غير معروف'}\n\n` +
+                       `📱 الجهاز: ${deviceId}\n\n` +
                        `أدخل هذا الكود في التطبيق للمتابعة.`;
         
         await this.sock.sendMessage(jid, { text: userMsg });
         
         // إرسال إشعار للمالك
         const ownerMsg = `📱 *طلب تحقق تطبيق جديد*\n\n` +
-                        `👤 المستخدم: ${userName}\n` +
-                        `📞 الرقم: ${phone || jid.split('@')[0]}\n` +
+                        `👤 المستخدم: ${name || pushName}\n` +
+                        `📞 الرقم: ${phone}\n` +
                         `📱 التطبيق: ${appName}\n` +
-                        `🆔 الجهاز: ${deviceId || 'غير معروف'}\n` +
+                        `🆔 الجهاز: ${deviceId}\n` +
                         `🔑 الكود: ${otp}\n\n` +
                         `⏳ في انتظار إدخال الكود من التطبيق...`;
         
         await this.sock.sendMessage(this.ownerJid, { text: ownerMsg });
         
-        return { 
-            status: 'OTP_SENT', 
-            message: 'تم إرسال كود التحقق إلى الواتساب',
-            appName 
-        };
+        return { status: 'OTP_SENT', appName, otpKey };
     }
 
     // التحقق من الكود المدخل من التطبيق
-    async verifyAppOTP(jid, appName, userOTP) {
-        const appKey = `${jid}_${appName}`;
+    async verifyOTP(jid, appName, userOTP) {
+        const otpKey = `${jid}_${appName}`;
         const now = Date.now();
         
-        if (!pendingOTP.has(appKey)) {
+        if (!pendingOTP.has(otpKey)) {
             return { 
                 status: 'ERROR', 
                 message: 'لا يوجد طلب تحقق لهذا التطبيق أو انتهت صلاحية الكود' 
             };
         }
         
-        const otpData = pendingOTP.get(appKey);
+        const otpData = pendingOTP.get(otpKey);
         
         // التحقق من الصلاحية
         if (now > otpData.expiry) {
-            pendingOTP.delete(appKey);
+            pendingOTP.delete(otpKey);
             return { status: 'ERROR', message: 'انتهت صلاحية الكود' };
         }
         
@@ -162,16 +136,7 @@ class Gatekeeper {
         
         // التحقق من عدد المحاولات
         if (otpData.attempts > otpData.maxAttempts) {
-            pendingOTP.delete(appKey);
-            
-            // إشعار المالك بالفشل
-            await this.sock.sendMessage(this.ownerJid, { 
-                text: `⚠️ *فشل التحقق*\n\n` +
-                      `👤 المستخدم: ${otpData.name || otpData.pushName}\n` +
-                      `📱 التطبيق: ${appName}\n` +
-                      `❌ تجاوز الحد الأقصى للمحاولات (3 محاولات)` 
-            });
-            
+            pendingOTP.delete(otpKey);
             return { status: 'ERROR', message: 'تجاوزت الحد الأقصى للمحاولات' };
         }
         
@@ -184,42 +149,27 @@ class Gatekeeper {
         }
         
         // ✅ الكود صحيح - توثيق التطبيق
+        const appKey = `${jid}_${appName}`;
         verifiedApps.set(appKey, {
             timestamp: now,
             appName: otpData.appName,
             deviceId: otpData.deviceId,
             name: otpData.name,
-            phone: otpData.phone,
-            jid: jid
+            phone: otpData.phone
         });
         
-        // تحديث بيانات المستخدم
-        if (userData.has(jid)) {
-            const data = userData.get(jid);
-            data.apps.set(appName, {
-                verifiedAt: now,
-                deviceId: otpData.deviceId
-            });
-        }
-        
         // حذف الكود المؤقت
-        pendingOTP.delete(appKey);
+        pendingOTP.delete(otpKey);
         
         // إرسال إشعار للمالك بالنجاح
         const ownerMsg = `✅ *تم توثيق تطبيق بنجاح*\n\n` +
                         `👤 المستخدم: ${otpData.name || otpData.pushName}\n` +
-                        `📞 الرقم: ${otpData.phone || jid.split('@')[0]}\n` +
+                        `📞 الرقم: ${otpData.phone}\n` +
                         `📱 التطبيق: ${appName}\n` +
-                        `🆔 الجهاز: ${otpData.deviceId || 'غير معروف'}\n\n` +
+                        `🆔 الجهاز: ${otpData.deviceId}\n\n` +
                         `🔓 أصبح بإمكانه استخدام التطبيق الآن.`;
         
         await this.sock.sendMessage(this.ownerJid, { text: ownerMsg });
-        
-        // رسالة تأكيد للمستخدم
-        await this.sock.sendMessage(jid, { 
-            text: `✅ *تم التحقق بنجاح!*\n\n` +
-                  `تطبيق ${appName} أصبح موثقاً وجاهزاً للاستخدام.` 
-        });
         
         return { 
             status: 'VERIFIED', 
@@ -229,30 +179,7 @@ class Gatekeeper {
         };
     }
 
-    // التحقق من حالة التوثيق
-    checkAppVerification(jid, appName) {
-        const appKey = `${jid}_${appName}`;
-        const now = Date.now();
-        
-        if (verifiedApps.has(appKey)) {
-            const verified = verifiedApps.get(appKey);
-            if (now - verified.timestamp < 30 * 24 * 60 * 60 * 1000) {
-                return {
-                    verified: true,
-                    appName: appName,
-                    deviceId: verified.deviceId,
-                    verifiedAt: verified.timestamp
-                };
-            } else {
-                // انتهت الصلاحية
-                verifiedApps.delete(appKey);
-            }
-        }
-        
-        return { verified: false };
-    }
-
-    // الدالة الرئيسية للتحقق من الوصول
+    // الدالة الرئيسية
     async handleEverything(jid, pushName, text) {
         // تجاهل المجموعات
         if (jid.includes('@g.us')) {
@@ -296,19 +223,14 @@ class Gatekeeper {
         // جلب الاسم الحقيقي
         const savedName = await this.getSavedName(jid);
         const displayName = savedName ? savedName : pushName || jid.split('@')[0];
-        const userPhone = jid.split('@')[0];
-        
-        // التحقق إذا كان المستخدم مسجل مسبقاً
-        const userExists = userData.has(jid);
-        const userInfo = userExists ? userData.get(jid) : null;
+        const nameStatus = savedName ? '✅ مسجل' : '⚠️ غير مسجل';
         
         // إرسال طلب الإذن للمالك
         const requestMsg = `🔔 *طلب إذن وصول*\n\n` +
                          `👤 *الاسم:* ${displayName}\n` +
-                         `📞 *الرقم:* ${userPhone}\n` +
-                         `📊 *الحالة:* ${savedName ? '✅ مسجل' : '⚠️ غير مسجل'}\n` +
-                         `🆕 *مستخدم جديد:* ${!userExists ? 'نعم' : 'لا'}\n` +
-                         `💬 *الرسالة:* "${text.length > 50 ? text.substring(0, 50) + '...' : text}"\n\n` +
+                         `📊 *الحالة:* ${nameStatus}\n` +
+                         `📱 *الرقم:* ${jid.split('@')[0]}\n` +
+                         `💬 *الرسالة:* "${text.length > 100 ? text.substring(0, 100) + '...' : text}"\n\n` +
                          `⏰ *المدة:* 10 دقائق بعد الموافقة\n\n` +
                          `✅ *نعم* - للسماح\n` +
                          `❌ *لا* - للمنع`;
@@ -359,13 +281,13 @@ class Gatekeeper {
                     });
                     
                     this.sock.sendMessage(this.ownerJid, { 
-                        text: `✅ *تم السماح*\n\n👤 ${displayName}\n📞 ${targetJid.split('@')[0]}\n⏰ لمدة 10 دقائق` 
+                        text: `✅ *تم السماح*\n\n👤 ${displayName}\n📱 ${targetJid.split('@')[0]}\n⏰ لمدة 10 دقائق` 
                     }).catch(() => {});
                     
                     resolve({ status: 'PROCEED', ownerApproved: true });
                 } else {
                     this.sock.sendMessage(this.ownerJid, { 
-                        text: `❌ *تم المنع*\n\n👤 ${displayName}\n📞 ${targetJid.split('@')[0]}\n\nلن يتمكن من إرسال رسائل.` 
+                        text: `❌ *تم المنع*\n\n👤 ${displayName}\n📱 ${targetJid.split('@')[0]}\n\nلن يتمكن من إرسال رسائل.` 
                     }).catch(() => {});
                     
                     resolve({ status: 'STOP', ownerDenied: true });
@@ -379,42 +301,35 @@ class Gatekeeper {
         return false;
     }
 
-    // أوامر المطور الجديدة
+    // معالجة أوامر المطور الجديدة
     handleOwnerCommands(text) {
         const cmd = text.trim();
         
-        // نجم حضر - عرض المستخدمين النشطين
+        // أمر تشغيل/إيقاف الذكاء الاصطناعي
+        if (cmd === 'نجم ذكا') {
+            this.aiEnabled = true;
+            this.sock.sendMessage(this.ownerJid, { 
+                text: `🧠 *تم تشغيل الذكاء الاصطناعي*\n\nالآن راح يرد على الجميع.` 
+            });
+            return true;
+        }
+        
+        if (cmd === 'نجم ذكا قف') {
+            this.aiEnabled = false;
+            this.sock.sendMessage(this.ownerJid, { 
+                text: `⏸️ *تم إيقاف الذكاء الاصطناعي*\n\nالآن راح يتجاهل كل الرسائل.` 
+            });
+            return true;
+        }
+        
+        // نجم حضر - عرض المستخدمين الحاضرين
         if (cmd === 'نجم حضر') {
-            const activeNow = [];
+            const activeNow = Array.from(activeSessions.entries())
+                .filter(([_, data]) => Date.now() - data.timestamp < this.sessionDuration)
+                .map(([jid, data]) => `• ${data.userName || jid.split('@')[0]} (${Math.round((this.sessionDuration - (Date.now() - data.timestamp)) / 60000)}د)`);
             
-            // المستخدمين النشطين حالياً
-            for (const [jid, data] of activeSessions) {
-                const remaining = this.sessionDuration - (Date.now() - data.timestamp);
-                if (remaining > 0) {
-                    const userName = data.userName || jid.split('@')[0];
-                    const userPhone = jid.split('@')[0];
-                    const minsLeft = Math.round(remaining / 60000);
-                    activeNow.push(`• ${userName} (${userPhone}) - ${minsLeft}د`);
-                }
-            }
-            
-            // التطبيقات الموثقة حديثاً
-            const recentApps = [];
-            const now = Date.now();
-            for (const [appKey, data] of verifiedApps) {
-                if (now - data.timestamp < 60 * 60 * 1000) { // آخر ساعة
-                    const [jid, appName] = appKey.split('_');
-                    recentApps.push(`• ${data.name || 'مستخدم'} - ${appName} (${jid.split('@')[0]})`);
-                }
-            }
-            
-            let msg = `✅ *المستخدمين النشطين:*\n`;
-            msg += activeNow.length ? activeNow.join('\n') : 'لا يوجد مستخدمين نشطين';
-            
-            if (recentApps.length > 0) {
-                msg += `\n\n🆕 *تطبيقات موثقة حديثاً:*\n`;
-                msg += recentApps.join('\n');
-            }
+            const msg = `✅ *المستخدمين النشطين حالياً:*\n\n` +
+                       (activeNow.length ? activeNow.join('\n') : 'لا يوجد مستخدمين نشطين');
             
             this.sock.sendMessage(this.ownerJid, { text: msg });
             return true;
@@ -429,12 +344,6 @@ class Gatekeeper {
             activeSessions.forEach((_, jid) => users.add(jid));
             pendingPermissions.forEach((_, jid) => users.add(jid));
             
-            // إضافة المستخدمين من التطبيقات الموثقة
-            verifiedApps.forEach((_, appKey) => {
-                const jid = appKey.split('_')[0];
-                users.add(jid);
-            });
-            
             const msg = `📢 *رسالة من المطور:*\n\n${message}`;
             
             users.forEach(jid => {
@@ -447,7 +356,7 @@ class Gatekeeper {
             return true;
         }
         
-        // نجم احصا - إحصائيات كاملة
+        // نجم احصا - عرض إحصائيات
         if (cmd === 'نجم احصا') {
             const now = Date.now();
             const activeCount = Array.from(activeSessions.values())
@@ -456,30 +365,14 @@ class Gatekeeper {
             const pendingCount = pendingPermissions.size;
             const otpCount = pendingOTP.size;
             const verifiedCount = verifiedApps.size;
-            const usersCount = userData.size;
-            
-            // إحصائيات التطبيقات
-            const appsStats = new Map();
-            verifiedApps.forEach((data) => {
-                const app = data.appName || 'غير معروف';
-                appsStats.set(app, (appsStats.get(app) || 0) + 1);
-            });
-            
-            let appsText = '';
-            appsStats.forEach((count, app) => {
-                appsText += `• ${app}: ${count}\n`;
-            });
             
             const msg = `📊 *إحصائيات النظام:*\n\n` +
-                       `👥 *المستخدمين:*\n` +
-                       `• إجمالي: ${usersCount}\n` +
-                       `• نشطين حالياً: ${activeCount}\n` +
-                       `• طلبات معلقة: ${pendingCount}\n\n` +
-                       `📱 *التطبيقات:*\n` +
-                       `• موثقة: ${verifiedCount}\n` +
-                       `• أكود معلقة: ${otpCount}\n` +
-                       `${appsStats.size ? '\n*حسب التطبيق:*\n' + appsText : ''}\n\n` +
-                       `⏳ *وقت التشغيل:* ${Math.floor(process.uptime() / 60)} دقيقة`;
+                       `🧠 الذكاء: ${this.aiEnabled ? '🟢 مفعل' : '🔴 معطل'}\n` +
+                       `🟢 مستخدمين نشطين: ${activeCount}\n` +
+                       `🟡 طلبات معلقة: ${pendingCount}\n` +
+                       `🔵 أكود تحقق معلقة: ${otpCount}\n` +
+                       `✅ تطبيقات موثقة: ${verifiedCount}\n` +
+                       `📱 مجموع المستخدمين: ${activeSessions.size}`;
             
             this.sock.sendMessage(this.ownerJid, { text: msg });
             return true;
@@ -489,51 +382,23 @@ class Gatekeeper {
         if (cmd.startsWith('نجم معلومات ')) {
             const target = cmd.substring(12);
             let found = false;
-            let info = '';
             
-            // البحث في بيانات المستخدمين
-            for (const [jid, data] of userData) {
-                if (jid.includes(target) || (data.phone && data.phone.includes(target)) || (data.name && data.name.includes(target))) {
-                    info = `ℹ️ *معلومات المستخدم:*\n\n` +
-                           `👤 الاسم: ${data.name || 'غير معروف'}\n` +
-                           `📞 الرقم: ${data.phone || jid.split('@')[0]}\n` +
-                           `🆔 JID: ${jid}\n` +
-                           `📅 أول ظهور: ${data.firstSeen.toLocaleString('ar-SA')}\n\n` +
-                           `📱 *التطبيقات الموثقة:*\n`;
+            // البحث في الجلسات النشطة
+            for (const [jid, data] of activeSessions) {
+                if (jid.includes(target) || (data.userName && data.userName.includes(target))) {
+                    const msg = `ℹ️ *معلومات المستخدم:*\n\n` +
+                               `👤 الاسم: ${data.userName || 'غير معروف'}\n` +
+                               `📱 الرقم: ${jid.split('@')[0]}\n` +
+                               `⏰ آخر نشاط: ${new Date(data.timestamp).toLocaleString('ar-SA')}\n` +
+                               `✅ موافقة: ${data.approvedBy ? 'يدوية' : 'تلقائية'}`;
                     
-                    if (data.apps.size > 0) {
-                        data.apps.forEach((appData, appName) => {
-                            info += `• ${appName} - ${new Date(appData.verifiedAt).toLocaleDateString('ar-SA')}\n`;
-                        });
-                    } else {
-                        info += 'لا يوجد تطبيقات موثقة';
-                    }
-                    
+                    this.sock.sendMessage(this.ownerJid, { text: msg });
                     found = true;
                     break;
                 }
             }
             
-            // إذا ما لقينا في userData، نبحث في verifiedApps
             if (!found) {
-                for (const [appKey, data] of verifiedApps) {
-                    const [jid, appName] = appKey.split('_');
-                    if (jid.includes(target) || (data.phone && data.phone.includes(target)) || (data.name && data.name.includes(target))) {
-                        info = `ℹ️ *معلومات المستخدم:*\n\n` +
-                               `👤 الاسم: ${data.name || 'غير معروف'}\n` +
-                               `📞 الرقم: ${data.phone || jid.split('@')[0]}\n` +
-                               `🆔 JID: ${jid}\n` +
-                               `📱 التطبيق: ${appName}\n` +
-                               `✅ موثق منذ: ${new Date(data.timestamp).toLocaleString('ar-SA')}`;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            
-            if (found) {
-                this.sock.sendMessage(this.ownerJid, { text: info });
-            } else {
                 this.sock.sendMessage(this.ownerJid, { 
                     text: `❌ لم يتم العثور على مستخدم: ${target}` 
                 });
@@ -544,20 +409,29 @@ class Gatekeeper {
         
         return false;
     }
-
-    // دوال مساعدة للاستعلام
-    getUserData(jid) {
-        return userData.get(jid) || null;
+    
+    // دوال مساعدة
+    isAIEnabled() {
+        return this.aiEnabled;
     }
     
-    getAppVerificationStatus(jid, appName) {
-        return this.checkAppVerification(jid, appName);
+    getSessionInfo(jid) {
+        if (activeSessions.has(jid)) {
+            const session = activeSessions.get(jid);
+            const remaining = this.sessionDuration - (Date.now() - session.timestamp);
+            return {
+                active: true,
+                remaining: Math.max(0, Math.round(remaining / 1000)),
+                userName: session.userName
+            };
+        }
+        return { active: false };
     }
     
-    getPendingOTP(jid, appName) {
-        const appKey = `${jid}_${appName}`;
-        if (pendingOTP.has(appKey)) {
-            const data = pendingOTP.get(appKey);
+    getOTPInfo(jid, appName) {
+        const otpKey = `${jid}_${appName}`;
+        if (pendingOTP.has(otpKey)) {
+            const data = pendingOTP.get(otpKey);
             return {
                 pending: true,
                 expiry: new Date(data.expiry).toLocaleString('ar-SA'),
@@ -565,6 +439,11 @@ class Gatekeeper {
             };
         }
         return { pending: false };
+    }
+    
+    isAppVerified(jid, appName) {
+        const appKey = `${jid}_${appName}`;
+        return verifiedApps.has(appKey);
     }
 }
 
