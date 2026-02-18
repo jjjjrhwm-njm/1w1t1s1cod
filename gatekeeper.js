@@ -1,8 +1,225 @@
-// gatekeeper.js - النسخة المطورة مع نظام التحقق للتطبيقات
+// gatekeeper.js - النسخة المطورة مع نظام التحقق وتصحيح الأرقام الذكي
 const pendingPermissions = new Map();
 const activeSessions = new Map();
 const pendingOTP = new Map(); // تخزين أكود التحقق المؤقتة
 const verifiedApps = new Map(); // تخزين التطبيقات الموثقة
+
+// =============================================
+// 🔥 نظام كشف وتصحيح الأرقام الدولي 🔥
+// =============================================
+const countryCodes = {
+    // دول الخليج
+    'SA': { code: '966', name: 'السعودية', length: 9, pattern: /^5[0-9]{8}$/ }, // 5xxxxxxxx
+    'AE': { code: '971', name: 'الإمارات', length: 9, pattern: /^5[0-9]{8}$/ },
+    'KW': { code: '965', name: 'الكويت', length: 8, pattern: /^[5-9][0-9]{7}$/ },
+    'QA': { code: '974', name: 'قطر', length: 8, pattern: /^3[0-9]{7}$|^6[0-9]{7}$|^7[0-9]{7}$/ },
+    'BH': { code: '973', name: 'البحرين', length: 8, pattern: /^3[0-9]{7}$|^6[0-9]{7}$/ },
+    'OM': { code: '968', name: 'عمان', length: 8, pattern: /^[79][0-9]{7}$/ },
+    
+    // دول عربية أخرى
+    'EG': { code: '20', name: 'مصر', length: 10, pattern: /^1[0-2,5][0-9]{8}$/ }, // 1xxxxxxxxx
+    'JO': { code: '962', name: 'الأردن', length: 9, pattern: /^7[0-9]{8}$/ },
+    'PS': { code: '970', name: 'فلسطين', length: 9, pattern: /^5[0-9]{8}$|^9[0-9]{8}$/ },
+    'LB': { code: '961', name: 'لبنان', length: 8, pattern: /^[37][0-9]{7}$|^81[0-9]{6}$/ },
+    'SY': { code: '963', name: 'سوريا', length: 9, pattern: /^9[0-9]{8}$/ },
+    'IQ': { code: '964', name: 'العراق', length: 10, pattern: /^7[0-9]{9}$/ },
+    'YE': { code: '967', name: 'اليمن', length: 9, pattern: /^7[0-9]{8}$|^3[0-9]{8}$/ },
+    'SD': { code: '249', name: 'السودان', length: 9, pattern: /^9[0-9]{8}$/ },
+    'LY': { code: '218', name: 'ليبيا', length: 9, pattern: /^9[0-9]{8}$/ },
+    'TN': { code: '216', name: 'تونس', length: 8, pattern: /^2[0-9]{7}$|^5[0-9]{7}$|^9[0-9]{7}$/ },
+    'DZ': { code: '213', name: 'الجزائر', length: 9, pattern: /^5[0-9]{8}$|^6[0-9]{8}$|^7[0-9]{8}$/ },
+    'MA': { code: '212', name: 'المغرب', length: 9, pattern: /^6[0-9]{8}$|^7[0-9]{8}$/ },
+    'MR': { code: '222', name: 'موريتانيا', length: 8, pattern: /^[23][0-9]{7}$/ },
+    'SO': { code: '252', name: 'الصومال', length: 8, pattern: /^[67][0-9]{7}$|^9[0-9]{7}$/ },
+    'DJ': { code: '253', name: 'جيبوتي', length: 8, pattern: /^7[0-9]{7}$/ },
+    'KM': { code: '269', name: 'جزر القمر', length: 7, pattern: /^3[0-9]{6}$|^7[0-9]{6}$/ },
+    
+    // دول غير عربية شائعة
+    'TR': { code: '90', name: 'تركيا', length: 10, pattern: /^5[0-9]{9}$/ },
+    'PK': { code: '92', name: 'باكستان', length: 10, pattern: /^3[0-9]{9}$/ },
+    'IN': { code: '91', name: 'الهند', length: 10, pattern: /^[6-9][0-9]{9}$/ },
+    'BD': { code: '880', name: 'بنغلاديش', length: 10, pattern: /^1[0-9]{9}$/ },
+    'PH': { code: '63', name: 'الفلبين', length: 10, pattern: /^9[0-9]{9}$/ },
+    'ID': { code: '62', name: 'إندونيسيا', length: 11, pattern: /^8[0-9]{10}$/ },
+    'MY': { code: '60', name: 'ماليزيا', length: 10, pattern: /^1[0-9]{9}$/ },
+    'TH': { code: '66', name: 'تايلاند', length: 9, pattern: /^[89][0-9]{8}$/ },
+    'VN': { code: '84', name: 'فيتنام', length: 9, pattern: /^[39][0-9]{8}$|^8[0-9]{8}$/ },
+    'LK': { code: '94', name: 'سريلانكا', length: 9, pattern: /^7[0-9]{8}$/ },
+    'NP': { code: '977', name: 'نيبال', length: 9, pattern: /^9[0-9]{8}$/ },
+    'AF': { code: '93', name: 'أفغانستان', length: 9, pattern: /^7[0-9]{8}$/ },
+    'IR': { code: '98', name: 'إيران', length: 10, pattern: /^9[0-9]{9}$/ },
+    'IL': { code: '972', name: 'إسرائيل', length: 9, pattern: /^5[0-9]{8}$/ },
+    
+    // دول أوروبية وأمريكية
+    'US': { code: '1', name: 'الولايات المتحدة', length: 10, pattern: /^[2-9][0-9]{2}[2-9][0-9]{2}[0-9]{4}$/ },
+    'CA': { code: '1', name: 'كندا', length: 10, pattern: /^[2-9][0-9]{2}[2-9][0-9]{2}[0-9]{4}$/ },
+    'GB': { code: '44', name: 'بريطانيا', length: 10, pattern: /^7[0-9]{9}$/ },
+    'FR': { code: '33', name: 'فرنسا', length: 9, pattern: /^6[0-9]{8}$|^7[0-9]{8}$/ },
+    'DE': { code: '49', name: 'ألمانيا', length: 11, pattern: /^1[5-7][0-9]{9}$/ },
+    'IT': { code: '39', name: 'إيطاليا', length: 10, pattern: /^3[0-9]{9}$/ },
+    'ES': { code: '34', name: 'إسبانيا', length: 9, pattern: /^[67][0-9]{8}$/ },
+    'NL': { code: '31', name: 'هولندا', length: 9, pattern: /^6[0-9]{8}$/ },
+    'BE': { code: '32', name: 'بلجيكا', length: 9, pattern: /^4[0-9]{8}$|^3[0-9]{8}$/ },
+    'CH': { code: '41', name: 'سويسرا', length: 9, pattern: /^7[0-9]{8}$/ },
+    'AT': { code: '43', name: 'النمسا', length: 10, pattern: /^6[0-9]{9}$/ },
+    'SE': { code: '46', name: 'السويد', length: 9, pattern: /^7[0-9]{8}$/ },
+    'NO': { code: '47', name: 'النرويج', length: 8, pattern: /^[49][0-9]{7}$/ },
+    'DK': { code: '45', name: 'الدنمارك', length: 8, pattern: /^[2-9][0-9]{7}$/ },
+    'FI': { code: '358', name: 'فنلندا', length: 9, pattern: /^4[0-9]{8}$|^5[0-9]{8}$/ },
+    'PL': { code: '48', name: 'بولندا', length: 9, pattern: /^[45][0-9]{8}$|^6[0-9]{8}$|^7[0-9]{8}$/ },
+    'CZ': { code: '420', name: 'التشيك', length: 9, pattern: /^[2-9][0-9]{8}$/ },
+    'HU': { code: '36', name: 'المجر', length: 9, pattern: /^[2-9][0-9]{8}$/ },
+    'GR': { code: '30', name: 'اليونان', length: 10, pattern: /^6[0-9]{9}$/ },
+    'PT': { code: '351', name: 'البرتغال', length: 9, pattern: /^9[0-9]{8}$/ },
+    'IE': { code: '353', name: 'أيرلندا', length: 9, pattern: /^8[0-9]{8}$/ },
+    'AU': { code: '61', name: 'أستراليا', length: 9, pattern: /^4[0-9]{8}$/ },
+    'NZ': { code: '64', name: 'نيوزيلندا', length: 9, pattern: /^2[0-9]{8}$/ },
+    'ZA': { code: '27', name: 'جنوب أفريقيا', length: 9, pattern: /^[67][0-9]{8}$|^8[0-9]{8}$/ },
+    'BR': { code: '55', name: 'البرازيل', length: 11, pattern: /^[1-9][0-9]{10}$/ },
+    'AR': { code: '54', name: 'الأرجنتين', length: 10, pattern: /^9[0-9]{9}$/ },
+    'MX': { code: '52', name: 'المكسيك', length: 10, pattern: /^1[0-9]{9}$|^2[0-9]{9}$|^3[0-9]{9}$/ },
+    'RU': { code: '7', name: 'روسيا', length: 10, pattern: /^9[0-9]{9}$/ },
+    'UA': { code: '380', name: 'أوكرانيا', length: 9, pattern: /^[3-9][0-9]{8}$/ },
+    'CN': { code: '86', name: 'الصين', length: 11, pattern: /^1[3-9][0-9]{9}$/ },
+    'JP': { code: '81', name: 'اليابان', length: 10, pattern: /^[7-9][0-9]{9}$/ },
+    'KR': { code: '82', name: 'كوريا الجنوبية', length: 10, pattern: /^1[0-9]{9}$|^2[0-9]{9}$/ },
+    'SG': { code: '65', name: 'سنغافورة', length: 8, pattern: /^[89][0-9]{7}$/ }
+};
+
+class PhoneNumberDetector {
+    constructor() {
+        this.countryCodes = countryCodes;
+    }
+
+    // تنظيف الرقم من الرموز والمسافات
+    cleanNumber(number) {
+        return number.replace(/[\s\-\(\)\+]/g, '');
+    }
+
+    // كشف مفتاح الدولة من الرقم
+    detectCountry(phone) {
+        const cleaned = this.cleanNumber(phone);
+        
+        // محاولة كشف المفتاح
+        for (const [country, data] of Object.entries(this.countryCodes)) {
+            if (cleaned.startsWith(data.code)) {
+                const withoutCode = cleaned.substring(data.code.length);
+                // التحقق من طول الرقم المحلي
+                if (withoutCode.length === data.length) {
+                    return {
+                        country: country,
+                        name: data.name,
+                        code: data.code,
+                        localNumber: withoutCode,
+                        fullNumber: data.code + withoutCode
+                    };
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    // تصحيح الرقم تلقائياً
+    autoCorrect(phone, defaultCountry = 'SA') {
+        const cleaned = this.cleanNumber(phone);
+        
+        // 1. إذا كان الرقم يبدأ بمفتاح دولة معروف
+        const detected = this.detectCountry(phone);
+        if (detected) {
+            return {
+                success: true,
+                original: phone,
+                corrected: detected.fullNumber,
+                country: detected.name,
+                countryCode: detected.code,
+                localNumber: detected.localNumber,
+                message: `✅ تم التعرف على الرقم: ${detected.name}`
+            };
+        }
+        
+        // 2. إذا كان الرقم بدون مفتاح (محلي)
+        // نستخدم الدولة الافتراضية (السعودية)
+        const defaultData = this.countryCodes[defaultCountry];
+        
+        // إزالة الصفر الأول إذا وجد
+        let localNumber = cleaned.startsWith('0') ? cleaned.substring(1) : cleaned;
+        
+        // التحقق من صحة الرقم المحلي
+        if (defaultData.pattern.test(localNumber)) {
+            const fullNumber = defaultData.code + localNumber;
+            return {
+                success: true,
+                original: phone,
+                corrected: fullNumber,
+                country: defaultData.name,
+                countryCode: defaultData.code,
+                localNumber: localNumber,
+                message: `✅ تم إضافة مفتاح ${defaultData.name} تلقائياً`
+            };
+        }
+        
+        // 3. محاولة البحث عن تطابق في أي دولة
+        for (const [country, data] of Object.entries(this.countryCodes)) {
+            // تجربة مع صفر
+            let testNumber = cleaned.startsWith('0') ? cleaned.substring(1) : cleaned;
+            
+            if (data.pattern.test(testNumber)) {
+                const fullNumber = data.code + testNumber;
+                return {
+                    success: true,
+                    original: phone,
+                    corrected: fullNumber,
+                    country: data.name,
+                    countryCode: data.code,
+                    localNumber: testNumber,
+                    message: `✅ تم التعرف على الرقم: ${data.name}`
+                };
+            }
+        }
+        
+        // 4. إذا فشل كل شيء، نستخدم السعودية كافتراضي مع محاولة التصحيح
+        let finalNumber = cleaned.startsWith('0') ? cleaned.substring(1) : cleaned;
+        // إذا كان الرقم قصير جداً، نضيف 5 قبله (افتراض سعودي)
+        if (finalNumber.length === 8) {
+            finalNumber = '5' + finalNumber;
+        }
+        
+        return {
+            success: true,
+            original: phone,
+            corrected: '966' + finalNumber,
+            country: 'السعودية (افتراضي)',
+            countryCode: '966',
+            localNumber: finalNumber,
+            message: '⚠️ تم استخدام التنسيق الافتراضي للسعودية'
+        };
+    }
+
+    // التحقق من صحة الرقم
+    isValid(phone) {
+        const result = this.autoCorrect(phone);
+        // تحقق بسيط: الرقم يجب أن يكون 12-15 رقم بعد إضافة المفتاح
+        const cleaned = this.cleanNumber(result.corrected);
+        return cleaned.length >= 10 && cleaned.length <= 15;
+    }
+
+    // الحصول على معلومات الرقم
+    getInfo(phone) {
+        const corrected = this.autoCorrect(phone);
+        return {
+            original: phone,
+            corrected: corrected.corrected,
+            country: corrected.country,
+            countryCode: corrected.countryCode,
+            localNumber: corrected.localNumber,
+            isValid: this.isValid(phone),
+            message: corrected.message
+        };
+    }
+}
+
+const phoneDetector = new PhoneNumberDetector();
 
 class Gatekeeper {
     constructor() {
@@ -13,13 +230,16 @@ class Gatekeeper {
         this.sock = null;
         this.ownerJid = null;
         this.aiEnabled = true; // الذكاء مفعل افتراضياً
+        
+        // ⚠️ السماح لرسائل OTP بدون موافقة مسبقة
+        this.otpWhitelist = new Set(); // قائمة الأرقام المسموح لها باستقبال OTP
     }
 
     // تهيئة الـ Gatekeeper
     initialize(sock, ownerJid) {
         this.sock = sock;
         this.ownerJid = ownerJid;
-        console.log('✅ Gatekeeper جاهز للعمل مع نظام التحقق');
+        console.log('✅ Gatekeeper جاهز للعمل مع نظام التحقق وتصحيح الأرقام');
     }
 
     // دالة محسنة لجلب الاسم
@@ -67,11 +287,17 @@ class Gatekeeper {
             }
         }
         
+        // ✅ تصحيح الرقم تلقائياً
+        const phoneInfo = phoneDetector.autoCorrect(phone);
+        const correctedPhone = phoneInfo.corrected;
+        
+        console.log(`📱 تصحيح الرقم: ${phone} → ${correctedPhone} (${phoneInfo.country})`);
+        
         // توليد كود تحقق جديد
         const otp = this.generateOTP();
         const otpKey = `${jid}_${appName}`;
         
-        // تخزين الكود مع البيانات
+        // تخزين الكود مع البيانات (مع الرقم المصحح)
         pendingOTP.set(otpKey, {
             otp,
             timestamp: now,
@@ -80,15 +306,25 @@ class Gatekeeper {
             pushName,
             appName,
             name,
-            phone,
+            phone: correctedPhone, // حفظ الرقم المصحح
+            originalPhone: phone,   // حفظ الرقم الأصلي للتتبع
+            phoneInfo,              // حفظ معلومات الرقم
             deviceId,
             attempts: 0,
             maxAttempts: 3
         });
         
-        // إرسال الكود للمستخدم عبر الواتساب
+        // ⚠️ إضافة الرقم إلى قائمة المسموح لهم مؤقتاً
+        this.otpWhitelist.add(jid);
+        
+        // إرسال الكود للمستخدم عبر الواتساب مع معلومات التصحيح
+        let correctionMsg = '';
+        if (phone !== correctedPhone) {
+            correctionMsg = `\n\n📌 *تم تصحيح الرقم تلقائياً:*\n${phone} → ${correctedPhone} (${phoneInfo.country})`;
+        }
+        
         const userMsg = `🔐 *كود التحقق لتطبيق ${appName}*\n\n` +
-                       `مرحباً ${name || pushName},\n\n` +
+                       `مرحباً ${name || pushName},${correctionMsg}\n\n` +
                        `كود التحقق الخاص بك هو:\n\n` +
                        `*${otp}*\n\n` +
                        `⏰ صلاحية الكود: 5 دقائق\n` +
@@ -97,10 +333,11 @@ class Gatekeeper {
         
         await this.sock.sendMessage(jid, { text: userMsg });
         
-        // إرسال إشعار للمالك
+        // إرسال إشعار للمالك مع معلومات التصحيح
         const ownerMsg = `📱 *طلب تحقق تطبيق جديد*\n\n` +
                         `👤 المستخدم: ${name || pushName}\n` +
-                        `📞 الرقم: ${phone}\n` +
+                        `📞 الرقم المدخل: ${phone}\n` +
+                        `✅ الرقم المصحح: ${correctedPhone} (${phoneInfo.country})\n` +
                         `📱 التطبيق: ${appName}\n` +
                         `🆔 الجهاز: ${deviceId}\n` +
                         `🔑 الكود: ${otp}\n\n` +
@@ -108,7 +345,16 @@ class Gatekeeper {
         
         await this.sock.sendMessage(this.ownerJid, { text: ownerMsg });
         
-        return { status: 'OTP_SENT', appName, otpKey };
+        return { 
+            status: 'OTP_SENT', 
+            appName, 
+            otpKey,
+            correctedPhone,
+            phoneInfo: {
+                country: phoneInfo.country,
+                countryCode: phoneInfo.countryCode
+            }
+        };
     }
 
     // التحقق من الكود المدخل من التطبيق
@@ -137,6 +383,7 @@ class Gatekeeper {
         // التحقق من عدد المحاولات
         if (otpData.attempts > otpData.maxAttempts) {
             pendingOTP.delete(otpKey);
+            this.otpWhitelist.delete(jid); // إزالة من القائمة بعد انتهاء المحاولات
             return { status: 'ERROR', message: 'تجاوزت الحد الأقصى للمحاولات' };
         }
         
@@ -155,16 +402,20 @@ class Gatekeeper {
             appName: otpData.appName,
             deviceId: otpData.deviceId,
             name: otpData.name,
-            phone: otpData.phone
+            phone: otpData.phone,
+            phoneInfo: otpData.phoneInfo
         });
         
         // حذف الكود المؤقت
         pendingOTP.delete(otpKey);
         
+        // ⚠️ إزالة من قائمة المسموح لهم (لأنه صار موثق)
+        this.otpWhitelist.delete(jid);
+        
         // إرسال إشعار للمالك بالنجاح
         const ownerMsg = `✅ *تم توثيق تطبيق بنجاح*\n\n` +
                         `👤 المستخدم: ${otpData.name || otpData.pushName}\n` +
-                        `📞 الرقم: ${otpData.phone}\n` +
+                        `📞 الرقم: ${otpData.phone} (${otpData.phoneInfo?.country || 'غير معروف'})\n` +
                         `📱 التطبيق: ${appName}\n` +
                         `🆔 الجهاز: ${otpData.deviceId}\n\n` +
                         `🔓 أصبح بإمكانه استخدام التطبيق الآن.`;
@@ -175,7 +426,23 @@ class Gatekeeper {
             status: 'VERIFIED', 
             message: '✅ تم التحقق بنجاح',
             appName,
-            deviceId: otpData.deviceId
+            deviceId: otpData.deviceId,
+            phone: otpData.phone,
+            phoneInfo: otpData.phoneInfo
+        };
+    }
+
+    // دالة للتحقق من الرقم (يمكن استخدامها من التطبيق)
+    async checkPhoneNumber(phone) {
+        const phoneInfo = phoneDetector.getInfo(phone);
+        return {
+            success: phoneInfo.isValid,
+            original: phoneInfo.original,
+            corrected: phoneInfo.corrected,
+            country: phoneInfo.country,
+            countryCode: phoneInfo.countryCode,
+            localNumber: phoneInfo.localNumber,
+            message: phoneInfo.message
         };
     }
 
@@ -195,6 +462,15 @@ class Gatekeeper {
             return { status: 'PROCEED' };
         }
 
+        // ⚠️ التحقق من وجود طلب OTP معلق
+        const hasPendingOTP = Array.from(pendingOTP.keys()).some(key => key.startsWith(jid));
+        
+        // ⚠️ إذا كان الرقم في قائمة المسموح لهم (لأجل OTP)، نسمح بالرسالة
+        if (this.otpWhitelist.has(jid) || hasPendingOTP) {
+            console.log(`📱 رقم ${jid.split('@')[0]} مسموح له مؤقتاً لاستقبال OTP`);
+            return { status: 'PROCEED' };
+        }
+
         // التحقق من الجلسة النشطة للمستخدم العادي
         const now = Date.now();
         if (activeSessions.has(jid)) {
@@ -204,12 +480,6 @@ class Gatekeeper {
             } else {
                 activeSessions.delete(jid);
             }
-        }
-
-        // إذا كان هناك طلب OTP معلق لهذا المستخدم
-        const hasPendingOTP = Array.from(pendingOTP.keys()).some(key => key.startsWith(jid));
-        if (hasPendingOTP) {
-            return { status: 'WAITING_OTP' };
         }
 
         // إذا كان هناك طلب إذن معلق
@@ -435,7 +705,8 @@ class Gatekeeper {
             return {
                 pending: true,
                 expiry: new Date(data.expiry).toLocaleString('ar-SA'),
-                attempts: data.attempts
+                attempts: data.attempts,
+                phoneInfo: data.phoneInfo
             };
         }
         return { pending: false };
@@ -444,6 +715,26 @@ class Gatekeeper {
     isAppVerified(jid, appName) {
         const appKey = `${jid}_${appName}`;
         return verifiedApps.has(appKey);
+    }
+
+    // دالة للبحث عن رقم في التطبيقات الموثقة
+    findAppByPhone(phone) {
+        const corrected = phoneDetector.autoCorrect(phone).corrected;
+        const results = [];
+        
+        verifiedApps.forEach((data, key) => {
+            if (data.phone === corrected) {
+                results.push({
+                    appName: data.appName,
+                    deviceId: data.deviceId,
+                    name: data.name,
+                    timestamp: data.timestamp,
+                    phoneInfo: data.phoneInfo
+                });
+            }
+        });
+        
+        return results;
     }
 }
 
