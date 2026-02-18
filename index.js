@@ -6,13 +6,12 @@ const QRCode = require("qrcode");
 const pino = require("pino");
 const fs = require("fs");
 const path = require("path");
-const https = require('https'); // للنبض
 
 // استيراد المنطق المطور
 const { getAIResponse } = require("./core/ai");
 const { handleManualCommand } = require("./core/commands");
 const { isSpamming } = require("./core/antiSpam");
-const gatekeeper = require("./gatekeeper");
+const gatekeeper = require("./gatekeeper"); // [ديب سيك] استدعاء ملف الحارس
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -119,71 +118,12 @@ class StateManager {
 
 const stateManager = new StateManager();
 
-// =============================================
-// 🔥 نظام النبض كل 10 دقائق 🔥
-// =============================================
-function startPingService() {
-    const pingInterval = 10 * 60 * 1000; // 10 دقائق
-    const selfUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${port}`;
-    
-    console.log(`📡 نظام النبض شغال على ${selfUrl} كل 10 دقائق`);
-    
-    // نبض فوري عند التشغيل
-    setTimeout(() => {
-        https.get(selfUrl, (res) => {
-            console.log(`✅ نبض أولي: ${res.statusCode} - ${new Date().toLocaleTimeString()}`);
-        }).on('error', (err) => {
-            console.log(`❌ خطأ في النبض الأولي: ${err.message}`);
-        });
-    }, 5000);
-    
-    // نبض كل 10 دقائق
-    setInterval(() => {
-        https.get(selfUrl, (res) => {
-            console.log(`✅ نبض: ${res.statusCode} - ${new Date().toLocaleTimeString()}`);
-        }).on('error', (err) => {
-            console.log(`❌ خطأ في النبض: ${err.message}`);
-        });
-    }, pingInterval);
-}
-
-// =============================================
-// 🔥 دالة مسح الجلسة القديمة 🔥
-// =============================================
-async function clearOldSession() {
-    console.log("🧹 جاري مسح الجلسة القديمة...");
-    
-    // مسح مجلد auth_info المحلي
-    if (fs.existsSync('./auth_info')) {
-        fs.rmSync('./auth_info', { recursive: true, force: true });
-        console.log("✅ تم مسح مجلد auth_info المحلي");
-    }
-    
-    // مسح الجلسة من Firebase
-    if (db) {
-        try {
-            await db.collection('session').doc('session_vip_rashed').delete();
-            console.log("✅ تم مسح الجلسة من Firebase");
-        } catch (e) {
-            console.log("❌ فشل مسح الجلسة من Firebase:", e.message);
-        }
-    }
-    
-    // إنشاء مجلد جديد
-    if (!fs.existsSync('./auth_info')) {
-        fs.mkdirSync('./auth_info', { recursive: true });
-    }
-    
-    console.log("✅ تم تهيئة البيئة لجلسة جديدة");
-}
-
 async function startBot() {
     try {
         setupDirectories();
         logger.log('INFO', 'Starting bot initialization...');
         
-        // ⚠️ مسح الجلسة القديمة مؤقتاً لحل المشكلة
-        // await clearOldSession(); // علق هذا السطر بعد أول تشغيل ناجح
+        await restoreSession();
         
         const { state, saveCreds } = await useMultiFileAuthState('auth_info');
         const { version } = await fetchLatestBaileysVersion();
@@ -195,11 +135,7 @@ async function startBot() {
             logger: pino({ level: "silent" }),
             browser: ["Mac OS", "Chrome", "114.0.5735.198"],
             markOnlineOnConnect: true,
-            syncFullHistory: false,
-            // ⚠️ إعدادات إضافية لحل مشكلة فك التشفير
-            retryRequestDelayMs: 1000,
-            maxRetries: 3,
-            defaultQueryTimeoutMs: 60000
+            syncFullHistory: false
         });
         
         sock.ev.on('creds.update', async () => {
@@ -211,16 +147,13 @@ async function startBot() {
             const { connection, qr, lastDisconnect } = update;
             if (qr) {
                 QRCode.toDataURL(qr, (err, url) => { qrCodeImage = url; });
-                console.log("📱 QR Code generated - Scan with WhatsApp");
-                console.log("🌐 افتح الرابط في المتصفح وامسح الكود:");
-                console.log(`   https://onew1t1s1cod.onrender.com`);
             }
             if (connection === 'open') { 
                 isConnected = true; 
                 qrCodeImage = "DONE"; 
                 logger.log('SUCCESS', 'Bot connected successfully!');
                 
-                // تهيئة الحارس
+                // تهيئة الحارس فور الاتصال
                 const ownerJid = process.env.OWNER_NUMBER ? process.env.OWNER_NUMBER + '@s.whatsapp.net' : null;
                 if (ownerJid) {
                     gatekeeper.initialize(sock, ownerJid);
@@ -231,17 +164,7 @@ async function startBot() {
             if (connection === 'close') {
                 isConnected = false;
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                if (shouldReconnect) {
-                    console.log("🔄 إعادة الاتصال بعد 5 ثواني...");
-                    setTimeout(startBot, 5000);
-                } else {
-                    console.log("🚪 تم تسجيل الخروج، يلزم مسح QR مجدداً");
-                    // مسح الجلسة المحلية
-                    if (fs.existsSync('./auth_info')) {
-                        fs.rmSync('./auth_info', { recursive: true, force: true });
-                    }
-                    setTimeout(startBot, 5000);
-                }
+                if (shouldReconnect) setTimeout(startBot, 5000);
             }
         });
         
@@ -251,15 +174,6 @@ async function startBot() {
             await processIncomingMessage(msg);
         });
         
-        // ⚠️ معالجة أخطاء فك التشفير
-        sock.ev.on('messages.update', async (updates) => {
-            for (const update of updates) {
-                if (update.update.messageStubType === 27) { // CIPHERTEXT
-                    console.log("🔐 مشكلة في فك التشفير، يتم تجاهل الرسالة");
-                }
-            }
-        });
-        
     } catch (error) {
         logger.log('ERROR', 'Failed to start bot:', error);
         setTimeout(startBot, 10000);
@@ -267,10 +181,6 @@ async function startBot() {
 }
 
 async function restoreSession() {
-    // ⚠️ لا نستعيد الجلسة من Firebase حالياً
-    return;
-    
-    /* الكود القديم - معطل مؤقتاً
     if (!db) return;
     try {
         const doc = await db.collection('session').doc('session_vip_rashed').get();
@@ -278,30 +188,22 @@ async function restoreSession() {
             const sessionData = doc.data();
             if (!fs.existsSync('./auth_info')) fs.mkdirSync('./auth_info');
             fs.writeFileSync('./auth_info/creds.json', JSON.stringify(sessionData));
-            console.log("✅ تم استعادة الجلسة من Firebase");
         }
     } catch (e) {}
-    */
 }
 
 async function backupSessionToFirebase() {
-    // ⚠️ لا نحفظ الجلسة في Firebase حالياً
-    return;
-    
-    /* الكود القديم - معطل مؤقتاً
     if (!db || !fs.existsSync('./auth_info/creds.json')) return;
     try {
         const creds = JSON.parse(fs.readFileSync('./auth_info/creds.json', 'utf8'));
         await db.collection('session').doc('session_vip_rashed').set(creds, { merge: true });
-        console.log("✅ تم حفظ الجلسة في Firebase");
     } catch (e) {}
-    */
 }
 
 async function sendStartupNotification() {
     const ownerJid = process.env.OWNER_NUMBER ? process.env.OWNER_NUMBER + '@s.whatsapp.net' : null;
     if (ownerJid && sock) {
-        await sock.sendMessage(ownerJid, { text: `✅ راشد جاهز لخدمتك يا مطور!\n🧠 الذكاء: ${gatekeeper.isAIEnabled() ? 'مفعل' : 'معطل'}` });
+        await sock.sendMessage(ownerJid, { text: `✅ راشد جاهز لخدمتك يا مطور!` });
     }
 }
 
@@ -320,14 +222,11 @@ async function processIncomingMessage(msg) {
 
     const isOwner = jid.includes(process.env.OWNER_NUMBER || "966554526287");
     
-    console.log(`📨 رسالة من ${pushName} (${jid.split('@')[0]}): ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
-    
     try {
-        // فحص الأوامر اليدوية أولاً
+        // فحص الأوامر اليدوية
         const manualResponse = await handleManualCommand(text, jid, isOwner, pushName);
         
         if (manualResponse) {
-            console.log(`🤖 رد: ${manualResponse.substring(0, 50)}...`);
             await simulateHumanTyping(jid, manualResponse.length);
             await sock.sendMessage(jid, { text: manualResponse });
             return;
@@ -335,7 +234,7 @@ async function processIncomingMessage(msg) {
 
         // نظام الحارس
         
-        // إذا كان المرسل هو المالك، نفحص إذا كان يرد بـ نعم/لا
+        // إذا كان المرسل هو المالك، نفحص إذا كان يرد بـ نعم/لا أو أوامر
         if (isOwner) {
             if (gatekeeper.handleOwnerDecision(text)) return; 
         }
@@ -343,19 +242,9 @@ async function processIncomingMessage(msg) {
         // فحص الإذن والانتظار
         const gateResponse = await gatekeeper.handleEverything(jid, pushName, text);
         
-        if (gateResponse.status === 'STOP' || gateResponse.status === 'WAITING' || gateResponse.status === 'WAITING_OTP') {
-            return;
-        }
+        if (gateResponse.status === 'STOP' || gateResponse.status === 'WAITING' || gateResponse.status === 'WAITING_OTP') return;
         
         if (botStatus.maintenance && !isOwner) return;
-        
-        // ✅ التحقق من حالة الذكاء الاصطناعي
-        // إذا كان الذكاء معطل والمرسل ليس المالك، نتجاهل الرسالة تماماً
-        if (!gatekeeper.isAIEnabled() && !isOwner) {
-            console.log(`🤖 الذكاء معطل - تم تجاهل رسالة من ${pushName} (${jid.split('@')[0]})`);
-            return;
-        }
-        
         if (!botStatus.autoReply && !isOwner) return;
         
         // الرد بالذكاء الاصطناعي
@@ -363,7 +252,6 @@ async function processIncomingMessage(msg) {
         const aiResponse = await getAIResponse(jid, text, pushName);
         
         if (aiResponse) {
-            console.log(`🤖 رد ذكي: ${aiResponse.substring(0, 50)}...`);
             await delay(1000 + (aiResponse.length * 10)); 
             await sock.sendMessage(jid, { text: aiResponse });
             if (db) updateStatistics(jid, pushName, text, aiResponse);
@@ -371,9 +259,7 @@ async function processIncomingMessage(msg) {
         
     } catch (error) {
         logger.log('ERROR', `Error with ${pushName}:`, error.message);
-        if (gatekeeper.isAIEnabled()) {
-            await sock.sendMessage(jid, { text: `حصل خطأ بسيط في معالجة رسالتك، أعد المحاولة يا غالي.` });
-        }
+        await sock.sendMessage(jid, { text: `حصل خطأ بسيط في معالجة رسالتك، أعد المحاولة يا غالي.` });
     }
 }
 
@@ -398,10 +284,10 @@ async function updateStatistics(jid, pushName, query, response) {
 }
 
 // =============================================
-// 🔥 نقاط API للتحقق من التطبيقات 🔥
+// 🔥 نقاط API الجديدة للتحقق من التطبيقات 🔥
 // =============================================
 
-app.use(express.json());
+app.use(express.json()); // لقراءة JSON من التطبيق
 
 // نقطة نهاية لطلب التحقق من التطبيق
 app.post('/api/verify-app', async (req, res) => {
@@ -414,8 +300,6 @@ app.post('/api/verify-app', async (req, res) => {
                 error: 'بيانات ناقصة: jid, appName, deviceId مطلوبة' 
             });
         }
-        
-        console.log(`📱 طلب تحقق: ${name || pushName} - ${phone} - ${appName}`);
         
         const result = await gatekeeper.handleAppVerification(jid, pushName, appName, name, phone, deviceId);
         res.json({ success: true, ...result });
@@ -439,8 +323,6 @@ app.post('/api/verify-otp', async (req, res) => {
                 error: 'بيانات ناقصة: jid, appName, otp مطلوبة' 
             });
         }
-        
-        console.log(`🔐 محاولة تحقق: ${jid} - ${appName} - كود: ${otp}`);
         
         const result = await gatekeeper.verifyOTP(jid, appName, otp);
         res.json({ success: true, ...result });
@@ -484,35 +366,12 @@ app.post('/api/check-verification', async (req, res) => {
     }
 });
 
-// نقطة نهاية للتحقق من الرقم وتصحيحه
-app.post('/api/check-phone', async (req, res) => {
+// نقطة نهاية للحصول على معلومات المستخدم (للمطور)
+app.post('/api/user-info', async (req, res) => {
     try {
-        const { phone } = req.body;
+        const { jid, adminKey } = req.body;
         
-        if (!phone) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'الرجاء إدخال رقم الهاتف' 
-            });
-        }
-        
-        const result = await gatekeeper.checkPhoneNumber(phone);
-        res.json({ success: true, ...result });
-        
-    } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
-        });
-    }
-});
-
-// نقطة نهاية للبحث عن تطبيقات برقم هاتف (للمطور)
-app.post('/api/find-by-phone', async (req, res) => {
-    try {
-        const { phone, adminKey } = req.body;
-        
-        // تحقق بسيط (للمطور فقط)
+        // تحقق بسيط
         if (adminKey !== process.env.ADMIN_KEY) {
             return res.status(403).json({ 
                 success: false, 
@@ -520,18 +379,23 @@ app.post('/api/find-by-phone', async (req, res) => {
             });
         }
         
-        if (!phone) {
+        if (!jid) {
             return res.status(400).json({ 
                 success: false, 
-                error: 'الرجاء إدخال رقم الهاتف' 
+                error: 'jid مطلوب' 
             });
         }
         
-        const results = gatekeeper.findAppByPhone(phone);
+        const sessionInfo = gatekeeper.getSessionInfo(jid);
+        const verifiedApps = [];
+        
+        // البحث عن التطبيقات الموثقة لهذا المستخدم
+        // هذا يحتاج تعديل في gatekeeper.js لكن حالياً نرجع معلومات بسيطة
+        
         res.json({ 
             success: true, 
-            count: results.length,
-            apps: results 
+            jid,
+            session: sessionInfo
         });
         
     } catch (error) {
@@ -542,44 +406,28 @@ app.post('/api/find-by-phone', async (req, res) => {
     }
 });
 
-// نقطة نهاية للصحة
+// نقطة نهاية للصحة (Health check)
 app.get('/api/health', (req, res) => {
     res.json({
         status: isConnected ? 'connected' : 'disconnected',
-        aiEnabled: gatekeeper.isAIEnabled(),
         uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        otpPending: Array.from(gatekeeper.otpWhitelist || []).length
+        timestamp: new Date().toISOString()
     });
 });
 
-// الصفحة الرئيسية
+// =============================================
+// الصفحة الرئيسية (كما هي)
+// =============================================
+
 app.get("/", (req, res) => {
-    if (isConnected) {
-        res.send(`<h1 style='text-align:center;color:green;'>✅ راشد متصل الآن</h1>
-                 <p style='text-align:center;'>🧠 الذكاء: ${gatekeeper.isAIEnabled() ? 'مفعل' : 'معطل'}</p>
-                 <p style='text-align:center;'>📱 نقاط API: /api/verify-app, /api/verify-otp, /api/check-phone</p>
-                 <p style='text-align:center;'>🔐 امسح QR مرة واحدة فقط ثم شغل البوت</p>`);
-    }
-    else if (qrCodeImage && qrCodeImage !== "DONE") {
-        res.send(`<div style='text-align:center;'><h1>🔐 امسح الكود</h1><img src='${qrCodeImage}'></div>
-                 <p style='text-align:center;'>بعد المسح، انتظر حتى يظهر "✅ راشد متصل الآن"</p>`);
-    }
-    else {
-        res.send("<h1 style='text-align:center;'>🔄 جاري التهيئة...</h1>");
-    }
+    if (isConnected) res.send("<h1 style='text-align:center;color:green;'>✅ راشد متصل الآن</h1>");
+    else if (qrCodeImage) res.send(`<div style='text-align:center;'><h1>🔐 امسح الكود</h1><img src='${qrCodeImage}'></div>`);
+    else res.send("<h1>🔄 جاري التهيئة...</h1>");
 });
 
 // بدء الخادم
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, () => {
     console.log(`🌐 Server on port ${port}`);
     console.log(`📱 API endpoints available at http://localhost:${port}/api/`);
-    console.log(`   - POST /api/verify-app`);
-    console.log(`   - POST /api/verify-otp`);
-    console.log(`   - POST /api/check-verification`);
-    console.log(`   - POST /api/check-phone`);
-    console.log(`   - POST /api/find-by-phone`);
-    console.log(`   - GET  /api/health`);
     startBot();
-    startPingService(); // تشغيل النبض
 });
