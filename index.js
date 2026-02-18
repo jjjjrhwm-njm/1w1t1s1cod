@@ -6,12 +6,13 @@ const QRCode = require("qrcode");
 const pino = require("pino");
 const fs = require("fs");
 const path = require("path");
+const https = require('https'); // للنبض
 
 // استيراد المنطق المطور
 const { getAIResponse } = require("./core/ai");
 const { handleManualCommand } = require("./core/commands");
 const { isSpamming } = require("./core/antiSpam");
-const gatekeeper = require("./gatekeeper"); // [ديب سيك] استدعاء ملف الحارس
+const gatekeeper = require("./gatekeeper");
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -118,6 +119,24 @@ class StateManager {
 
 const stateManager = new StateManager();
 
+// =============================================
+// 🔥 نظام النبض كل 10 دقائق 🔥
+// =============================================
+function startPingService() {
+    const pingInterval = 10 * 60 * 1000; // 10 دقائق
+    const selfUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${port}`;
+    
+    console.log(`📡 نظام النبض شغال على ${selfUrl} كل 10 دقائق`);
+    
+    setInterval(() => {
+        https.get(selfUrl, (res) => {
+            console.log(`✅ نبض: ${res.statusCode} - ${new Date().toLocaleTimeString()}`);
+        }).on('error', (err) => {
+            console.log(`❌ خطأ في النبض: ${err.message}`);
+        });
+    }, pingInterval);
+}
+
 async function startBot() {
     try {
         setupDirectories();
@@ -153,7 +172,7 @@ async function startBot() {
                 qrCodeImage = "DONE"; 
                 logger.log('SUCCESS', 'Bot connected successfully!');
                 
-                // تهيئة الحارس فور الاتصال
+                // تهيئة الحارس
                 const ownerJid = process.env.OWNER_NUMBER ? process.env.OWNER_NUMBER + '@s.whatsapp.net' : null;
                 if (ownerJid) {
                     gatekeeper.initialize(sock, ownerJid);
@@ -203,7 +222,7 @@ async function backupSessionToFirebase() {
 async function sendStartupNotification() {
     const ownerJid = process.env.OWNER_NUMBER ? process.env.OWNER_NUMBER + '@s.whatsapp.net' : null;
     if (ownerJid && sock) {
-        await sock.sendMessage(ownerJid, { text: `✅ راشد جاهز لخدمتك يا مطور!` });
+        await sock.sendMessage(ownerJid, { text: `✅ راشد جاهز لخدمتك يا مطور!\n🧠 الذكاء: ${gatekeeper.isAIEnabled() ? 'مفعل' : 'معطل'}` });
     }
 }
 
@@ -223,7 +242,7 @@ async function processIncomingMessage(msg) {
     const isOwner = jid.includes(process.env.OWNER_NUMBER || "966554526287");
     
     try {
-        // فحص الأوامر اليدوية
+        // فحص الأوامر اليدوية أولاً
         const manualResponse = await handleManualCommand(text, jid, isOwner, pushName);
         
         if (manualResponse) {
@@ -232,9 +251,9 @@ async function processIncomingMessage(msg) {
             return;
         }
 
-        // نظام الحارس
+        // نظام الحساس
         
-        // إذا كان المرسل هو المالك، نفحص إذا كان يرد بـ نعم/لا أو أوامر
+        // إذا كان المرسل هو المالك، نفحص إذا كان يرد بـ نعم/لا
         if (isOwner) {
             if (gatekeeper.handleOwnerDecision(text)) return; 
         }
@@ -245,6 +264,14 @@ async function processIncomingMessage(msg) {
         if (gateResponse.status === 'STOP' || gateResponse.status === 'WAITING' || gateResponse.status === 'WAITING_OTP') return;
         
         if (botStatus.maintenance && !isOwner) return;
+        
+        // ✅ التحقق من حالة الذكاء الاصطناعي
+        // إذا كان الذكاء معطل والمرسل ليس المالك، نتجاهل الرسالة تماماً
+        if (!gatekeeper.isAIEnabled() && !isOwner) {
+            console.log(`🤖 الذكاء معطل - تم تجاهل رسالة من ${pushName}`);
+            return;
+        }
+        
         if (!botStatus.autoReply && !isOwner) return;
         
         // الرد بالذكاء الاصطناعي
@@ -259,7 +286,9 @@ async function processIncomingMessage(msg) {
         
     } catch (error) {
         logger.log('ERROR', `Error with ${pushName}:`, error.message);
-        await sock.sendMessage(jid, { text: `حصل خطأ بسيط في معالجة رسالتك، أعد المحاولة يا غالي.` });
+        if (gatekeeper.isAIEnabled()) {
+            await sock.sendMessage(jid, { text: `حصل خطأ بسيط في معالجة رسالتك، أعد المحاولة يا غالي.` });
+        }
     }
 }
 
@@ -284,10 +313,10 @@ async function updateStatistics(jid, pushName, query, response) {
 }
 
 // =============================================
-// 🔥 نقاط API الجديدة للتحقق من التطبيقات 🔥
+// 🔥 نقاط API للتحقق من التطبيقات 🔥
 // =============================================
 
-app.use(express.json()); // لقراءة JSON من التطبيق
+app.use(express.json());
 
 // نقطة نهاية لطلب التحقق من التطبيق
 app.post('/api/verify-app', async (req, res) => {
@@ -366,61 +395,19 @@ app.post('/api/check-verification', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على معلومات المستخدم (للمطور)
-app.post('/api/user-info', async (req, res) => {
-    try {
-        const { jid, adminKey } = req.body;
-        
-        // تحقق بسيط
-        if (adminKey !== process.env.ADMIN_KEY) {
-            return res.status(403).json({ 
-                success: false, 
-                error: 'غير مصرح' 
-            });
-        }
-        
-        if (!jid) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'jid مطلوب' 
-            });
-        }
-        
-        const sessionInfo = gatekeeper.getSessionInfo(jid);
-        const verifiedApps = [];
-        
-        // البحث عن التطبيقات الموثقة لهذا المستخدم
-        // هذا يحتاج تعديل في gatekeeper.js لكن حالياً نرجع معلومات بسيطة
-        
-        res.json({ 
-            success: true, 
-            jid,
-            session: sessionInfo
-        });
-        
-    } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
-        });
-    }
-});
-
-// نقطة نهاية للصحة (Health check)
+// نقطة نهاية للصحة
 app.get('/api/health', (req, res) => {
     res.json({
         status: isConnected ? 'connected' : 'disconnected',
+        aiEnabled: gatekeeper.isAIEnabled(),
         uptime: process.uptime(),
         timestamp: new Date().toISOString()
     });
 });
 
-// =============================================
-// الصفحة الرئيسية (كما هي)
-// =============================================
-
+// الصفحة الرئيسية
 app.get("/", (req, res) => {
-    if (isConnected) res.send("<h1 style='text-align:center;color:green;'>✅ راشد متصل الآن</h1>");
+    if (isConnected) res.send(`<h1 style='text-align:center;color:green;'>✅ راشد متصل الآن<br>🧠 الذكاء: ${gatekeeper.isAIEnabled() ? 'مفعل' : 'معطل'}</h1>`);
     else if (qrCodeImage) res.send(`<div style='text-align:center;'><h1>🔐 امسح الكود</h1><img src='${qrCodeImage}'></div>`);
     else res.send("<h1>🔄 جاري التهيئة...</h1>");
 });
@@ -430,4 +417,5 @@ app.listen(port, () => {
     console.log(`🌐 Server on port ${port}`);
     console.log(`📱 API endpoints available at http://localhost:${port}/api/`);
     startBot();
+    startPingService(); // تشغيل النبض
 });
